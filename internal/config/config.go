@@ -8,20 +8,24 @@ import (
 )
 
 type Config struct {
-	Endpoint   string `yaml:"endpoint"`
-	ListenPort int    `yaml:"listen_port"`
-	APIPort    int    `yaml:"api_port"`
+	Domain     string `yaml:"domain"`
+	ListenAddr string `yaml:"listen_addr"`
 	Network    string `yaml:"network"`
 	DataDir    string `yaml:"data_dir"`
+	CertDir    string `yaml:"cert_dir"`
+	TunName    string `yaml:"tun_name"`
+	TunMTU     int    `yaml:"tun_mtu"`
 }
 
 func Default() *Config {
 	return &Config{
-		Endpoint:   "0.0.0.0:51820",
-		ListenPort: 51820,
-		APIPort:    8080,
+		Domain:     "localhost",
+		ListenAddr: ":443",
 		Network:    "10.100.0.0/24",
 		DataDir:    "/etc/mesh",
+		CertDir:    "/etc/mesh/certs",
+		TunName:    "mesh0",
+		TunMTU:     1300,
 	}
 }
 
@@ -30,7 +34,6 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
-
 	cfg := Default()
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)

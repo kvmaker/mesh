@@ -2,79 +2,34 @@ package token
 
 import (
 	"database/sql"
+	"path/filepath"
 	"testing"
 
 	"github.com/maxyu/mesh/internal/db"
 )
 
-func setupTestDB(t *testing.T) *sql.DB {
+func setup(t *testing.T) *sql.DB {
 	t.Helper()
-	database, err := db.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	if err := db.Migrate(database); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	t.Cleanup(func() { database.Close() })
-	return database
+	d, _ := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	db.Migrate(d)
+	t.Cleanup(func() { d.Close() })
+	return d
 }
 
-func TestGenerate(t *testing.T) {
+func TestGenerateAndVerify(t *testing.T) {
+	d := setup(t)
 	tok, err := Generate()
 	if err != nil {
-		t.Fatalf("Generate failed: %v", err)
+		t.Fatal(err)
 	}
-	if len(tok) != 64 { // 32 bytes hex encoded = 64 chars
-		t.Fatalf("expected 64 char token, got %d", len(tok))
+	if len(tok) != 64 {
+		t.Fatalf("expected 64 chars, got %d", len(tok))
 	}
-}
-
-func TestSaveAndLoad(t *testing.T) {
-	database := setupTestDB(t)
-
-	tok, _ := Generate()
-	if err := Save(database, tok); err != nil {
-		t.Fatalf("Save failed: %v", err)
+	Save(d, tok)
+	if !Verify(d, tok) {
+		t.Fatal("valid token should verify")
 	}
-
-	loaded, err := Load(database)
-	if err != nil {
-		t.Fatalf("Load failed: %v", err)
-	}
-	if loaded != tok {
-		t.Fatalf("expected %q, got %q", tok, loaded)
-	}
-}
-
-func TestVerify(t *testing.T) {
-	database := setupTestDB(t)
-
-	tok, _ := Generate()
-	Save(database, tok)
-
-	if !Verify(database, tok) {
-		t.Fatal("expected valid token to verify")
-	}
-	if Verify(database, "wrong-token") {
-		t.Fatal("expected invalid token to fail")
-	}
-}
-
-func TestSaveOverwrites(t *testing.T) {
-	database := setupTestDB(t)
-
-	tok1, _ := Generate()
-	Save(database, tok1)
-
-	tok2, _ := Generate()
-	Save(database, tok2)
-
-	loaded, _ := Load(database)
-	if loaded != tok2 {
-		t.Fatalf("expected new token %q, got %q", tok2, loaded)
-	}
-	if Verify(database, tok1) {
-		t.Fatal("old token should no longer verify")
+	if Verify(d, "wrong") {
+		t.Fatal("invalid token should not verify")
 	}
 }

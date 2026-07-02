@@ -11,29 +11,23 @@ import (
 func Generate() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
-		return "", fmt.Errorf("generate random bytes: %w", err)
+		return "", err
 	}
 	return hex.EncodeToString(b), nil
 }
 
 func Save(db *sql.DB, value string) error {
-	_, err := db.Exec(
-		"INSERT OR REPLACE INTO meta (key, value) VALUES ('token', ?)",
-		value,
-	)
-	if err != nil {
-		return fmt.Errorf("save token: %w", err)
-	}
-	return nil
+	_, err := db.Exec("INSERT OR REPLACE INTO meta (key, value) VALUES ('token', ?)", value)
+	return err
 }
 
 func Load(db *sql.DB) (string, error) {
-	var value string
-	err := db.QueryRow("SELECT value FROM meta WHERE key = 'token'").Scan(&value)
+	var v string
+	err := db.QueryRow("SELECT value FROM meta WHERE key = 'token'").Scan(&v)
 	if err != nil {
 		return "", fmt.Errorf("load token: %w", err)
 	}
-	return value, nil
+	return v, nil
 }
 
 func Verify(db *sql.DB, input string) bool {
