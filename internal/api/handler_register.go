@@ -37,6 +37,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 			ServerEndpoint:  s.cfg.Endpoint,
 			NetworkCIDR:     s.cfg.Network,
 			DeviceSecret:    existing.Secret,
+			DeviceID:        existing.ID,
 		})
 		return
 	}
@@ -87,6 +88,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		ServerEndpoint:  s.cfg.Endpoint,
 		NetworkCIDR:     s.cfg.Network,
 		DeviceSecret:    secret,
+		DeviceID:        d.ID,
 	})
 }
 

@@ -30,6 +30,7 @@ type RegisterResponse struct {
 	ServerEndpoint  string `json:"server_endpoint"`
 	NetworkCIDR     string `json:"network_cidr"`
 	DeviceSecret    string `json:"device_secret"`
+	DeviceID        string `json:"device_id"`
 }
 
 // New 创建一个新的 Server 实例
