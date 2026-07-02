@@ -133,6 +133,9 @@ func Join(serverAddr, token string) error {
 		return fmt.Errorf("setup wireguard: %w", err)
 	}
 
+	// 启动后台心跳
+	StartHeartbeat(serverAddr, regResp.DeviceSecret)
+
 	fmt.Printf("Joined successfully!\n")
 	fmt.Printf("  IP:      %s\n", regResp.AssignedIP)
 	fmt.Printf("  Network: %s\n", regResp.NetworkCIDR)

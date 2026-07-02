@@ -37,7 +37,11 @@ func joinCmd() *cobra.Command {
 			if token == "" {
 				return fmt.Errorf("--token is required")
 			}
-			return client.Join(args[0], token)
+			if err := client.Join(args[0], token); err != nil {
+				return err
+			}
+			fmt.Println("Press Ctrl+C to disconnect.")
+			select {}
 		},
 	}
 
