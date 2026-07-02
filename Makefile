@@ -1,4 +1,4 @@
-.PHONY: build test clean
+.PHONY: build test clean release-dry-run
 
 build:
 	go build -o bin/meshd ./cmd/meshd
@@ -8,7 +8,7 @@ test:
 	go test ./... -v
 
 clean:
-	rm -rf bin/
+	rm -rf bin/ dist/
 
 build-linux:
 	GOOS=linux GOARCH=amd64 go build -o bin/meshd-linux-amd64 ./cmd/meshd
@@ -17,3 +17,6 @@ build-linux:
 build-darwin:
 	GOOS=darwin GOARCH=arm64 go build -o bin/meshd-darwin-arm64 ./cmd/meshd
 	GOOS=darwin GOARCH=arm64 go build -o bin/mesh-darwin-arm64 ./cmd/mesh
+
+release-dry-run:
+	goreleaser release --snapshot --clean
