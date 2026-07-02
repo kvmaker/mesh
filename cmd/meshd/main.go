@@ -330,7 +330,8 @@ func deviceCmd() *cobra.Command {
 			}
 			secret := hex.EncodeToString(secretBytes)
 
-			// 存储设备
+			// 释放临时占位记录，再创建正式设备记录
+			device.Release(database, ip)
 			d := &device.Device{
 				ID:        uuid.New().String(),
 				Name:      args[0],
