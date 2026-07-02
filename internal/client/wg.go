@@ -50,7 +50,7 @@ func setupLinux(cfg WGConfig) error {
 	_ = runCmd("ip", "link", "add", cfg.Interface, "type", "wireguard")
 
 	// 配置私钥、peer、endpoint 和 allowed-ips
-	cmd := exec.Command("wg", "set", cfg.Interface,
+	cmd := exec.Command(findBinary("wg"), "set", cfg.Interface,
 		"private-key", "/dev/stdin",
 		"peer", cfg.PeerPubKey,
 		"endpoint", cfg.Endpoint,
@@ -95,9 +95,28 @@ PersistentKeepalive = 25
 }
 
 func runCmd(name string, args ...string) error {
-	cmd := exec.Command(name, args...)
+	path := findBinary(name)
+	cmd := exec.Command(path, args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s %s: %s: %w", name, strings.Join(args, " "), string(out), err)
 	}
 	return nil
+}
+
+func findBinary(name string) string {
+	if p, err := exec.LookPath(name); err == nil {
+		return p
+	}
+	extras := []string{
+		"/opt/homebrew/bin",
+		"/usr/local/bin",
+		os.Getenv("HOME") + "/bin",
+	}
+	for _, dir := range extras {
+		p := dir + "/" + name
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return name
 }
