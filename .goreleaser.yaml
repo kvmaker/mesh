@@ -61,6 +61,7 @@ homebrew_casks:
       name: homebrew-tap
     homepage: "https://github.com/kvmaker/mesh"
     description: "Mesh VPN client — join a self-hosted WireGuard mesh network"
+    skip_upload: true
 
 release:
   extra_files:
