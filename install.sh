@@ -46,11 +46,24 @@ detect_arch() {
 }
 
 get_latest_version() {
+    # 方法1: GitHub API（可能被限流）
+    local v=""
     if command -v curl &>/dev/null; then
-        curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
-    elif command -v wget &>/dev/null; then
-        wget -qO- "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/'
+        v=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" 2>/dev/null | grep '"tag_name"' | sed -E 's/.*"v([^"]+)".*/\1/')
     fi
+    if [ -n "$v" ]; then echo "$v"; return; fi
+
+    # 方法2: 从 redirect URL 解析（不需要 API 配额）
+    if command -v curl &>/dev/null; then
+        v=$(curl -fsSI "https://github.com/$REPO/releases/latest" 2>/dev/null | grep -i "^location:" | sed -E 's|.*/v([^[:space:]]+).*|\1|')
+    fi
+    if [ -n "$v" ]; then echo "$v"; return; fi
+
+    # 方法3: 使用 gh CLI
+    if command -v gh &>/dev/null; then
+        v=$(gh release view --repo "$REPO" --json tagName -q '.tagName' 2>/dev/null | sed 's/^v//')
+    fi
+    echo "$v"
 }
 
 download() {
@@ -70,10 +83,15 @@ install_binary() {
 
     os=$(detect_os)
     arch=$(detect_arch)
-    version=$(get_latest_version)
+
+    if [ -n "$VERSION" ]; then
+        version="$VERSION"
+    else
+        version=$(get_latest_version)
+    fi
 
     if [ -z "$version" ]; then
-        echo "Error: 无法获取最新版本号（可能是 GitHub API 限流）"
+        echo "Error: 无法获取最新版本号。请使用 --version 指定，如: install.sh --version 2.1.0 client"
         exit 1
     fi
 
@@ -293,6 +311,14 @@ if [ "$(id -u)" -ne 0 ]; then
     echo "Error: 需要 root 权限，请使用 sudo 运行"
     exit 1
 fi
+
+# 解析全局参数
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --version) VERSION="$2"; shift 2 ;;
+        *) break ;;
+    esac
+done
 
 case "${1:-}" in
     server)   shift; install_server "$@" ;;
