@@ -7,35 +7,27 @@ import (
 )
 
 type Device struct {
-	ID        string
-	Name      string
-	PublicKey string
-	IP        string
-	Secret    string
-	LastSeen  time.Time
-	Online    bool
-	Passive   bool
+	ID       string
+	Name     string
+	IP       string
+	Secret   string
+	LastSeen time.Time
+	Online   bool
 }
 
 func Create(db *sql.DB, d *Device) error {
-	_, err := db.Exec(
-		"INSERT INTO devices (id, name, public_key, ip, secret, passive) VALUES (?, ?, ?, ?, ?, ?)",
-		d.ID, d.Name, d.PublicKey, d.IP, d.Secret, d.Passive,
-	)
-	if err != nil {
-		return fmt.Errorf("insert device: %w", err)
-	}
-	return nil
+	_, err := db.Exec("INSERT INTO devices (id, name, ip, secret) VALUES (?, ?, ?, ?)",
+		d.ID, d.Name, d.IP, d.Secret)
+	return err
 }
 
 func GetByID(db *sql.DB, id string) (*Device, error) {
 	d := &Device{}
 	var lastSeen sql.NullTime
-	err := db.QueryRow(
-		"SELECT id, name, public_key, ip, secret, last_seen, online, passive FROM devices WHERE id = ?", id,
-	).Scan(&d.ID, &d.Name, &d.PublicKey, &d.IP, &d.Secret, &lastSeen, &d.Online, &d.Passive)
+	err := db.QueryRow("SELECT id, name, ip, secret, last_seen, online FROM devices WHERE id = ?", id).
+		Scan(&d.ID, &d.Name, &d.IP, &d.Secret, &lastSeen, &d.Online)
 	if err != nil {
-		return nil, fmt.Errorf("get device %s: %w", id, err)
+		return nil, fmt.Errorf("device %s: %w", id, err)
 	}
 	if lastSeen.Valid {
 		d.LastSeen = lastSeen.Time
@@ -43,14 +35,13 @@ func GetByID(db *sql.DB, id string) (*Device, error) {
 	return d, nil
 }
 
-func GetByPublicKey(db *sql.DB, pubkey string) (*Device, error) {
+func GetBySecret(db *sql.DB, secret string) (*Device, error) {
 	d := &Device{}
 	var lastSeen sql.NullTime
-	err := db.QueryRow(
-		"SELECT id, name, public_key, ip, secret, last_seen, online, passive FROM devices WHERE public_key = ?", pubkey,
-	).Scan(&d.ID, &d.Name, &d.PublicKey, &d.IP, &d.Secret, &lastSeen, &d.Online, &d.Passive)
+	err := db.QueryRow("SELECT id, name, ip, secret, last_seen, online FROM devices WHERE secret = ?", secret).
+		Scan(&d.ID, &d.Name, &d.IP, &d.Secret, &lastSeen, &d.Online)
 	if err != nil {
-		return nil, fmt.Errorf("get device by pubkey: %w", err)
+		return nil, fmt.Errorf("device by secret: %w", err)
 	}
 	if lastSeen.Valid {
 		d.LastSeen = lastSeen.Time
@@ -59,54 +50,39 @@ func GetByPublicKey(db *sql.DB, pubkey string) (*Device, error) {
 }
 
 func List(db *sql.DB) ([]Device, error) {
-	rows, err := db.Query("SELECT id, name, public_key, ip, secret, last_seen, online, passive FROM devices")
+	rows, err := db.Query("SELECT id, name, ip, secret, last_seen, online FROM devices")
 	if err != nil {
-		return nil, fmt.Errorf("list devices: %w", err)
+		return nil, err
 	}
 	defer rows.Close()
-
-	var devices []Device
+	var devs []Device
 	for rows.Next() {
 		var d Device
 		var lastSeen sql.NullTime
-		if err := rows.Scan(&d.ID, &d.Name, &d.PublicKey, &d.IP, &d.Secret, &lastSeen, &d.Online, &d.Passive); err != nil {
-			return nil, fmt.Errorf("scan device: %w", err)
+		if err := rows.Scan(&d.ID, &d.Name, &d.IP, &d.Secret, &lastSeen, &d.Online); err != nil {
+			return nil, err
 		}
 		if lastSeen.Valid {
 			d.LastSeen = lastSeen.Time
 		}
-		devices = append(devices, d)
+		devs = append(devs, d)
 	}
-	return devices, nil
+	return devs, nil
 }
 
 func Delete(db *sql.DB, id string) error {
-	result, err := db.Exec("DELETE FROM devices WHERE id = ?", id)
+	res, err := db.Exec("DELETE FROM devices WHERE id = ?", id)
 	if err != nil {
-		return fmt.Errorf("delete device: %w", err)
+		return err
 	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
+	n, _ := res.RowsAffected()
+	if n == 0 {
 		return fmt.Errorf("device %s not found", id)
 	}
 	return nil
 }
 
-func UpdateHeartbeat(db *sql.DB, id string) error {
-	_, err := db.Exec("UPDATE devices SET last_seen = datetime('now'), online = 1 WHERE id = ?", id)
-	if err != nil {
-		return fmt.Errorf("update heartbeat: %w", err)
-	}
-	return nil
-}
-
-func MarkOffline(db *sql.DB, timeout time.Duration) error {
-	secs := int(timeout.Seconds())
-	_, err := db.Exec(
-		fmt.Sprintf("UPDATE devices SET online = 0 WHERE online = 1 AND last_seen < datetime('now', '-%d seconds')", secs),
-	)
-	if err != nil {
-		return fmt.Errorf("mark offline: %w", err)
-	}
-	return nil
+func UpdateOnline(db *sql.DB, id string, online bool) error {
+	_, err := db.Exec("UPDATE devices SET online = ?, last_seen = datetime('now') WHERE id = ?", online, id)
+	return err
 }

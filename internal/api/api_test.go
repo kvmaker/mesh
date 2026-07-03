@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/maxyu/mesh/internal/config"
@@ -13,127 +14,97 @@ import (
 	"github.com/maxyu/mesh/internal/token"
 )
 
-func setupTestServer(t *testing.T) (*Server, *sql.DB) {
+func setupTest(t *testing.T) (*Server, *sql.DB) {
 	t.Helper()
-	database, err := db.Open(":memory:")
-	if err != nil {
-		t.Fatalf("open db: %v", err)
-	}
-	db.Migrate(database)
-	t.Cleanup(func() { database.Close() })
-
+	d, _ := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	db.Migrate(d) //nolint:errcheck
+	t.Cleanup(func() { d.Close() })
 	tok, _ := token.Generate()
-	token.Save(database, tok)
-
+	token.Save(d, tok) //nolint:errcheck
 	cfg := config.Default()
-	cfg.Endpoint = "test.example.com:51820"
-
-	srv := New(database, cfg, "wg0-test")
-	return srv, database
+	srv := New(d, cfg, nil)
+	return srv, d
 }
 
 func TestRegisterSuccess(t *testing.T) {
-	srv, database := setupTestServer(t)
-	tok, _ := token.Load(database)
+	srv, d := setupTest(t)
+	tok, _ := token.Load(d)
 
-	body := RegisterRequest{
-		Token:     tok,
-		PublicKey: "dGVzdHB1YmtleTEyMzQ1Njc4OTAxMjM0NTY=", // valid base64
-		Hostname:  "test-macbook",
-	}
-	jsonBody, _ := json.Marshal(body)
-
-	req := httptest.NewRequest("POST", "/api/devices/register", bytes.NewReader(jsonBody))
+	body, _ := json.Marshal(RegisterRequest{Token: tok, Hostname: "test-device"})
+	req := httptest.NewRequest("POST", "/api/devices/register", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
 
-	srv.handler().ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
+	if w.Code != 200 {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-
 	var resp RegisterResponse
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	json.Unmarshal(w.Body.Bytes(), &resp) //nolint:errcheck
 	if resp.AssignedIP != "10.100.0.2" {
 		t.Fatalf("expected 10.100.0.2, got %s", resp.AssignedIP)
 	}
 	if resp.DeviceSecret == "" {
-		t.Fatal("expected non-empty device secret")
+		t.Fatal("expected non-empty secret")
 	}
 }
 
 func TestRegisterInvalidToken(t *testing.T) {
-	srv, _ := setupTestServer(t)
-
-	body := RegisterRequest{
-		Token:     "invalid-token",
-		PublicKey: "dGVzdHB1YmtleTEyMzQ1Njc4OTAxMjM0NTY=",
-		Hostname:  "test",
-	}
-	jsonBody, _ := json.Marshal(body)
-
-	req := httptest.NewRequest("POST", "/api/devices/register", bytes.NewReader(jsonBody))
+	srv, _ := setupTest(t)
+	body, _ := json.Marshal(RegisterRequest{Token: "wrong", Hostname: "test"})
+	req := httptest.NewRequest("POST", "/api/devices/register", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
-
-	srv.handler().ServeHTTP(w, req)
-
-	if w.Code != http.StatusUnauthorized {
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != 401 {
 		t.Fatalf("expected 401, got %d", w.Code)
 	}
 }
 
-func TestRegisterDuplicatePublicKey(t *testing.T) {
-	srv, database := setupTestServer(t)
-	tok, _ := token.Load(database)
-
-	body := RegisterRequest{
-		Token:     tok,
-		PublicKey: "dGVzdHB1YmtleTEyMzQ1Njc4OTAxMjM0NTY=",
-		Hostname:  "test",
-	}
-	jsonBody, _ := json.Marshal(body)
-
-	// 第一次注册
-	req := httptest.NewRequest("POST", "/api/devices/register", bytes.NewReader(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
+func TestCoverPage(t *testing.T) {
+	srv, _ := setupTest(t)
+	req := httptest.NewRequest("GET", "/", nil)
 	w := httptest.NewRecorder()
-	srv.handler().ServeHTTP(w, req)
-
-	// 第二次注册（幂等，返回已有信息）
-	req = httptest.NewRequest("POST", "/api/devices/register", bytes.NewReader(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w = httptest.NewRecorder()
-	srv.handler().ServeHTTP(w, req)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 for idempotent register, got %d", w.Code)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/html" {
+		t.Fatalf("expected text/html, got %s", ct)
 	}
 }
 
-func TestHeartbeat(t *testing.T) {
-	srv, database := setupTestServer(t)
-	tok, _ := token.Load(database)
-
-	// 先注册
-	body := RegisterRequest{Token: tok, PublicKey: "dGVzdHB1YmtleTEyMzQ1Njc4OTAxMjM0NTY=", Hostname: "test"}
-	jsonBody, _ := json.Marshal(body)
-	req := httptest.NewRequest("POST", "/api/devices/register", bytes.NewReader(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
+func TestTunnelNilGuard(t *testing.T) {
+	srv, _ := setupTest(t)
+	req := httptest.NewRequest("GET", "/tunnel", nil)
 	w := httptest.NewRecorder()
-	srv.handler().ServeHTTP(w, req)
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 when tunnel is nil, got %d", w.Code)
+	}
+}
 
-	var regResp RegisterResponse
-	json.Unmarshal(w.Body.Bytes(), &regResp)
+func TestRegisterRateLimit(t *testing.T) {
+	srv, d := setupTest(t)
+	tok, _ := token.Load(d)
 
-	// 发送心跳
-	req = httptest.NewRequest("POST", "/api/devices/heartbeat", nil)
-	req.Header.Set("Authorization", "Bearer "+regResp.DeviceSecret)
-	w = httptest.NewRecorder()
-	srv.handler().ServeHTTP(w, req)
+	for i := 0; i < 5; i++ {
+		body, _ := json.Marshal(RegisterRequest{Token: tok, Hostname: "dev"})
+		req := httptest.NewRequest("POST", "/api/devices/register", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.RemoteAddr = "1.2.3.4:5678"
+		w := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(w, req)
+	}
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	// 6th request from same IP should be rate-limited
+	body, _ := json.Marshal(RegisterRequest{Token: tok, Hostname: "dev"})
+	req := httptest.NewRequest("POST", "/api/devices/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.RemoteAddr = "1.2.3.4:5678"
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", w.Code)
 	}
 }
