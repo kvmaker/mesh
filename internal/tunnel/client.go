@@ -92,10 +92,10 @@ func (tc *TunnelClient) connect(ctx context.Context) error {
 				return
 			}
 			// Prepend 4-byte offset for TUN header (required on macOS utun)
-			buf := make([]byte, 4+len(pkt))
-			copy(buf[4:], pkt)
+			buf := make([]byte, meshtun.Offset()+len(pkt))
+			copy(buf[meshtun.Offset():], pkt)
 			bufs := [][]byte{buf}
-			if _, err := tc.tun.Write(bufs, 4); err != nil {
+			if _, err := tc.tun.Write(bufs, meshtun.Offset()); err != nil {
 				log.Printf("write to TUN: %v", err)
 			}
 		}
@@ -103,7 +103,7 @@ func (tc *TunnelClient) connect(ctx context.Context) error {
 
 	// TUN → WS: main loop reads packets from TUN and sends over WebSocket.
 	bufs := make([][]byte, 1)
-	bufs[0] = make([]byte, 4+tc.mtu+100)
+	bufs[0] = make([]byte, meshtun.Offset()+tc.mtu+100)
 	sizes := make([]int, 1)
 
 	for {
@@ -113,7 +113,7 @@ func (tc *TunnelClient) connect(ctx context.Context) error {
 		default:
 		}
 
-		n, err := tc.tun.Read(bufs, sizes, 4)
+		n, err := tc.tun.Read(bufs, sizes, meshtun.Offset())
 		if err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -126,7 +126,7 @@ func (tc *TunnelClient) connect(ctx context.Context) error {
 
 		// Packet data starts at offset 4
 		pkt := make([]byte, sizes[0])
-		copy(pkt, bufs[0][4:4+sizes[0]])
+		copy(pkt, bufs[0][meshtun.Offset():meshtun.Offset()+sizes[0]])
 
 		if err := conn.Write(ctx, websocket.MessageBinary, pkt); err != nil {
 			return fmt.Errorf("write WS: %w", err)
