@@ -22,7 +22,20 @@
 
 ## 安装
 
-### 构建
+### 一键安装（推荐）
+
+```bash
+# 服务器（Linux，需要 root）
+curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh | sudo bash -s -- server --domain your.domain.com
+
+# 客户端（macOS / Linux，需要 root）
+curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh | sudo bash -s -- client
+
+# 卸载
+curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh | sudo bash -s -- uninstall
+```
+
+### 从源码构建
 
 ```bash
 # 服务器（Linux amd64）

@@ -1,0 +1,48 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build binaries
+        run: |
+          mkdir -p dist
+          # Server (Linux amd64)
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/meshd ./cmd/meshd
+          tar -czf dist/meshd_${GITHUB_REF_NAME#v}_linux_amd64.tar.gz -C dist meshd
+          rm dist/meshd
+          # Client (Linux amd64)
+          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/mesh ./cmd/mesh
+          tar -czf dist/mesh_${GITHUB_REF_NAME#v}_linux_amd64.tar.gz -C dist mesh
+          rm dist/mesh
+          # Client (macOS arm64)
+          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/mesh ./cmd/mesh
+          tar -czf dist/mesh_${GITHUB_REF_NAME#v}_darwin_arm64.tar.gz -C dist mesh
+          rm dist/mesh
+          # Client (macOS amd64)
+          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/mesh ./cmd/mesh
+          tar -czf dist/mesh_${GITHUB_REF_NAME#v}_darwin_amd64.tar.gz -C dist mesh
+          rm dist/mesh
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true
