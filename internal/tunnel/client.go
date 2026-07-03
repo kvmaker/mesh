@@ -16,11 +16,8 @@ import (
 type TunnelClient struct {
 	serverURL string
 	secret    string
-	localIP   string
-	network   string
 	mtu       int
 	tun       meshtun.Device
-	tunName   string
 }
 
 // NewTunnelClient creates a TunnelClient, initializes the TUN device, and
@@ -38,11 +35,8 @@ func NewTunnelClient(serverURL, secret, localIP, network string, mtu int) (*Tunn
 	return &TunnelClient{
 		serverURL: serverURL,
 		secret:    secret,
-		localIP:   localIP,
-		network:   network,
 		mtu:       mtu,
 		tun:       dev,
-		tunName:   name,
 	}, nil
 }
 

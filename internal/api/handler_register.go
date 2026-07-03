@@ -1,8 +1,6 @@
 package api
 
 import (
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"net/http"
 
@@ -44,12 +42,11 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secretBytes := make([]byte, 32)
-	if _, err := rand.Read(secretBytes); err != nil {
+	secret, err := token.Generate()
+	if err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
-	secret := hex.EncodeToString(secretBytes)
 
 	dev := &device.Device{
 		ID:     uuid.New().String(),
@@ -63,7 +60,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(RegisterResponse{ //nolint:errcheck
+	json.NewEncoder(w).Encode(RegisterResponse{
 		AssignedIP:   ip,
 		DeviceSecret: secret,
 		DeviceID:     dev.ID,
