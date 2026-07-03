@@ -53,7 +53,7 @@ func (ts *TunnelServer) Start(ctx context.Context) error {
 // readTUN reads packets from the TUN device and routes them to the appropriate WebSocket client.
 func (ts *TunnelServer) readTUN(ctx context.Context) {
 	bufs := make([][]byte, 1)
-	bufs[0] = make([]byte, ts.cfg.TunMTU+100)
+	bufs[0] = make([]byte, 4+ts.cfg.TunMTU+100)
 	sizes := make([]int, 1)
 
 	for {
@@ -62,11 +62,12 @@ func (ts *TunnelServer) readTUN(ctx context.Context) {
 			return
 		default:
 		}
-		n, err := ts.tun.Read(bufs, sizes, 0)
+		n, err := ts.tun.Read(bufs, sizes, 4)
 		if err != nil || n == 0 {
 			continue
 		}
-		pkt := bufs[0][:sizes[0]]
+		pkt := make([]byte, sizes[0])
+		copy(pkt, bufs[0][4:4+sizes[0]])
 		ts.routePacket(pkt)
 	}
 }
@@ -153,8 +154,10 @@ func (ts *TunnelServer) clientReadLoop(ctx context.Context, conn *websocket.Conn
 
 		if dst == ts.tunIP {
 			// Packet destined for server: inject into TUN device
-			bufs := [][]byte{pkt}
-			if _, err := ts.tun.Write(bufs, 0); err != nil {
+			buf := make([]byte, 4+len(pkt))
+			copy(buf[4:], pkt)
+			bufs := [][]byte{buf}
+			if _, err := ts.tun.Write(bufs, 4); err != nil {
 				log.Printf("write to TUN: %v", err)
 			}
 		} else if cc, ok := ts.router.Lookup(dst); ok {

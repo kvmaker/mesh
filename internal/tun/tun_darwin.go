@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strings"
 )
 
 func ConfigureInterface(ifaceName, localIP, network string) error {
@@ -21,7 +22,9 @@ func ConfigureInterface(ifaceName, localIP, network string) error {
 		return fmt.Errorf("ifconfig: %s: %w", out, err)
 	}
 	if out, err := exec.Command("route", "-n", "add", "-net", network, "-interface", ifaceName).CombinedOutput(); err != nil {
-		return fmt.Errorf("route add: %s: %w", out, err)
+		if !strings.Contains(string(out), "exists") {
+			return fmt.Errorf("route add: %s: %w", out, err)
+		}
 	}
 	return nil
 }

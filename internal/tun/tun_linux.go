@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os/exec"
+	"strings"
 )
 
 func ConfigureInterface(ifaceName, localIP, network string) error {
@@ -17,13 +18,17 @@ func ConfigureInterface(ifaceName, localIP, network string) error {
 	addr := fmt.Sprintf("%s/%d", localIP, ones)
 
 	if out, err := exec.Command("ip", "addr", "add", addr, "dev", ifaceName).CombinedOutput(); err != nil {
-		return fmt.Errorf("ip addr add: %s: %w", out, err)
+		if !strings.Contains(string(out), "exists") {
+			return fmt.Errorf("ip addr add: %s: %w", out, err)
+		}
 	}
 	if out, err := exec.Command("ip", "link", "set", ifaceName, "up").CombinedOutput(); err != nil {
 		return fmt.Errorf("ip link set up: %s: %w", out, err)
 	}
 	if out, err := exec.Command("ip", "route", "add", network, "dev", ifaceName).CombinedOutput(); err != nil {
-		return fmt.Errorf("ip route add: %s: %w", out, err)
+		if !strings.Contains(string(out), "exists") {
+			return fmt.Errorf("ip route add: %s: %w", out, err)
+		}
 	}
 	return nil
 }
