@@ -50,7 +50,64 @@ make build-darwin   # 生成 bin/mesh-darwin-arm64
 - 一个域名，DNS A 记录指向服务器 IP
 - 服务器开放端口 443（HTTPS）和 80（ACME 证书验证）
 
-### 服务器部署
+### 方式一：使用安装脚本（推荐）
+
+#### 服务器
+
+```bash
+# 构建
+make build-linux
+
+# 上传并安装（一键完成：安装二进制 + 创建配置 + 初始化 + 创建 systemd 服务）
+scp bin/meshd-linux-amd64 scripts/install-server.sh user@server:/tmp/
+ssh user@server "sudo /tmp/install-server.sh /tmp/meshd-linux-amd64"
+
+# 修改配置中的 domain 字段
+ssh user@server "sudo vi /etc/mesh/meshd.yaml"
+
+# 启动
+ssh user@server "sudo systemctl start meshd"
+```
+
+#### macOS 客户端
+
+```bash
+# 构建
+make build-darwin
+
+# 安装（安装二进制 + 创建 launchd plist）
+sudo ./scripts/install-client.sh bin/mesh-darwin-arm64
+
+# 注册（不需要 root）
+mesh join your-domain.com --token <token>
+
+# 启动后台服务
+sudo launchctl load /Library/LaunchDaemons/com.mesh.vpn.plist
+```
+
+#### Linux 客户端
+
+```bash
+# 构建
+make build-linux
+
+# 安装（安装二进制 + 创建 systemd 服务）
+sudo ./scripts/install-client.sh bin/mesh-linux-amd64
+
+# 注册
+mesh join your-domain.com --token <token>
+
+# 启动后台服务
+sudo systemctl start mesh
+```
+
+#### 卸载
+
+```bash
+sudo ./scripts/uninstall.sh
+```
+
+### 方式二：手动部署
 
 ```bash
 # 1. 上传二进制

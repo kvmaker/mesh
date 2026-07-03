@@ -1,4 +1,4 @@
-.PHONY: build test clean
+.PHONY: build test clean install-server install-client uninstall
 
 build:
 	go build -o bin/meshd ./cmd/meshd
@@ -16,3 +16,12 @@ build-linux:
 
 build-darwin:
 	GOOS=darwin GOARCH=arm64 go build -o bin/mesh-darwin-arm64 ./cmd/mesh
+
+install-server:
+	@echo "用法: sudo ./scripts/install-server.sh bin/meshd-linux-amd64 [meshd.yaml]"
+
+install-client:
+	@echo "用法: sudo ./scripts/install-client.sh bin/mesh"
+
+uninstall:
+	@echo "用法: sudo ./scripts/uninstall.sh"
