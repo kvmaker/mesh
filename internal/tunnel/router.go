@@ -1,6 +1,8 @@
 package tunnel
 
 import (
+	"context"
+	"log"
 	"net/netip"
 	"sync"
 	"sync/atomic"
@@ -10,6 +12,11 @@ import (
 )
 
 // ClientConn represents a client connection with its associated metadata.
+//
+// Since TODO P02 the connection is the single writer to its WebSocket:
+// forwarding paths only Enqueue packets and a writeLoop goroutine drains
+// the queue serially. This avoids both concurrent WebSocket writes and
+// the head-of-line blocking caused by slow peers on the read side.
 type ClientConn struct {
 	Conn        *websocket.Conn
 	DeviceID    string
@@ -21,6 +28,45 @@ type ClientConn struct {
 	RxPackets      atomic.Uint64
 	RxBytes        atomic.Uint64
 	LastPacketTime atomic.Int64 // unix nano
+
+	// SendQueue buffers packets waiting to be written to the WebSocket.
+	// It is owned by writeLoop.
+	SendQueue chan Packet
+	// Done is closed by Close to signal writeLoop to exit.
+	Done chan struct{}
+	// writeLoopDone is closed when writeLoop returns; useful for tests
+	// to wait for the goroutine to actually exit.
+	writeLoopDone chan struct{}
+
+	// DropPackets counts packets dropped because the send queue was full.
+	DropPackets atomic.Uint64
+	// QueueDepth is the current number of packets buffered in SendQueue.
+	QueueDepth atomic.Int64
+	// QueueMaxDepth records the high-water mark of QueueDepth since the
+	// connection was created.
+	QueueMaxDepth atomic.Int64
+
+	closed atomic.Bool
+}
+
+// NewClientConn wraps an accepted WebSocket into a ClientConn and starts its
+// single-writer goroutine. Forwarding paths must call Enqueue instead of
+// writing to Conn directly.
+func NewClientConn(conn *websocket.Conn, deviceID string, ip netip.Addr, queueSize int) *ClientConn {
+	if queueSize <= 0 {
+		queueSize = DefaultSendQueueSize
+	}
+	cc := &ClientConn{
+		Conn:          conn,
+		DeviceID:      deviceID,
+		IP:            ip,
+		ConnectedAt:   time.Now(),
+		SendQueue:     make(chan Packet, queueSize),
+		Done:          make(chan struct{}),
+		writeLoopDone: make(chan struct{}),
+	}
+	go cc.writeLoop()
+	return cc
 }
 
 // RecordTx records an outgoing packet (server → client).
@@ -37,6 +83,90 @@ func (cc *ClientConn) RecordRx(size int) {
 	cc.LastPacketTime.Store(time.Now().UnixNano())
 }
 
+// Enqueue submits a packet to the per-connection send queue. When the queue
+// is full it drops the packet (drop_tail policy) and increments DropPackets.
+// Returns true if the packet was accepted, false if dropped.
+//
+// Callers must not mutate pkt.Data after handing it to Enqueue.
+func (cc *ClientConn) Enqueue(pkt Packet) bool {
+	if cc.closed.Load() {
+		cc.DropPackets.Add(1)
+		return false
+	}
+	select {
+	case cc.SendQueue <- pkt:
+		depth := cc.QueueDepth.Add(1)
+		// Update high-water mark using a CAS-ish loop to avoid contention
+		// on the common path.
+		for {
+			cur := cc.QueueMaxDepth.Load()
+			if depth <= cur || cc.QueueMaxDepth.CompareAndSwap(cur, depth) {
+				break
+			}
+		}
+		return true
+	default:
+		cc.DropPackets.Add(1)
+		return false
+	}
+}
+
+// Close stops the writeLoop and releases the send queue. Safe to call
+// multiple times.
+func (cc *ClientConn) Close() {
+	if cc.closed.Swap(true) {
+		return
+	}
+	close(cc.Done)
+}
+
+// writeLoop is the single writer to the underlying WebSocket for this
+// ClientConn. It exits when Done is closed or when the connection is nil.
+func (cc *ClientConn) writeLoop() {
+	defer close(cc.writeLoopDone)
+	if cc.Conn == nil {
+		// Defensive: tests and any future misuse that passes a nil conn
+		// should not crash the process.
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-cc.Done
+		cancel()
+	}()
+
+	for {
+		select {
+		case <-cc.Done:
+			// Drain remaining packets so a fast producer does not leak
+			// them silently; if a write fails here we just log.
+			for {
+				select {
+				case pkt := <-cc.SendQueue:
+					cc.QueueDepth.Add(-1)
+					if err := cc.Conn.Write(ctx, websocket.MessageBinary, pkt.Data); err != nil {
+						log.Printf("write to client %s during shutdown: %v", cc.DeviceID, err)
+					} else {
+						cc.RecordTx(len(pkt.Data))
+					}
+				default:
+					return
+				}
+			}
+		case pkt := <-cc.SendQueue:
+			cc.QueueDepth.Add(-1)
+			if err := cc.Conn.Write(ctx, websocket.MessageBinary, pkt.Data); err != nil {
+				log.Printf("write to client %s: %v", cc.DeviceID, err)
+				// Stop the loop on the first write error: the connection
+				// is likely broken and the reader side will surface it.
+				return
+			}
+			cc.RecordTx(len(pkt.Data))
+		}
+	}
+}
+
 // ConnStats is a point-in-time snapshot of a connected client's statistics.
 type ConnStats struct {
 	DeviceID    string    `json:"device_id"`
@@ -46,6 +176,8 @@ type ConnStats struct {
 	TxBytes     uint64    `json:"tx_bytes"`
 	RxPackets   uint64    `json:"rx_packets"`
 	RxBytes     uint64    `json:"rx_bytes"`
+	DropPackets uint64    `json:"drop_packets"`
+	QueueDepth  int64     `json:"queue_depth"`
 	LastPacket  time.Time `json:"last_packet,omitzero"`
 }
 
@@ -103,6 +235,8 @@ func (r *Router) Stats() []ConnStats {
 			TxBytes:     cc.TxBytes.Load(),
 			RxPackets:   cc.RxPackets.Load(),
 			RxBytes:     cc.RxBytes.Load(),
+			DropPackets: cc.DropPackets.Load(),
+			QueueDepth:  cc.QueueDepth.Load(),
 			LastPacket:  lastPkt,
 		})
 	}

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
-	"time"
 
 	"github.com/coder/websocket"
 	"github.com/maxyu/mesh/internal/config"
@@ -102,11 +101,10 @@ func (ts *TunnelServer) routePacket(pkt []byte) {
 	if !ok {
 		return
 	}
-	if err := cc.Conn.Write(context.Background(), websocket.MessageBinary, pkt); err != nil {
-		log.Printf("write to client %s: %v", cc.DeviceID, err)
-		return
-	}
-	cc.RecordTx(len(pkt))
+	// Hand off to the per-connection single writer. RecordTx is performed
+	// inside writeLoop after the WebSocket frame is actually written, so
+	// the server-side Tx count reflects what was sent, not what was queued.
+	cc.Enqueue(Packet{Data: pkt})
 }
 
 // HandleWebSocket handles incoming WebSocket upgrade requests, authenticates the device,
@@ -139,9 +137,12 @@ func (ts *TunnelServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	cc := &ClientConn{Conn: conn, DeviceID: dev.ID, IP: ip, ConnectedAt: time.Now()}
+	cc := NewClientConn(conn, dev.ID, ip, DefaultSendQueueSize)
 	ts.router.Register(ip, cc)
-	defer ts.router.Unregister(ip)
+	defer func() {
+		ts.router.Unregister(ip)
+		cc.Close()
+	}()
 
 	if err := device.UpdateOnline(ts.db, dev.ID, true); err != nil {
 		log.Printf("update online status for %s: %v", dev.ID, err)
@@ -187,11 +188,9 @@ func (ts *TunnelServer) clientReadLoop(ctx context.Context, cc *ClientConn) {
 				log.Printf("write to TUN: %v", err)
 			}
 		} else if dest, ok := ts.router.Lookup(dst); ok {
-			if err := dest.Conn.Write(ctx, websocket.MessageBinary, pkt); err != nil {
-				log.Printf("forward to client %s: %v", dest.DeviceID, err)
-			} else {
-				dest.RecordTx(len(pkt))
-			}
+			// Hand off to the per-connection single writer. RecordTx is
+			// performed inside writeLoop after the frame is actually sent.
+			dest.Enqueue(Packet{Data: pkt})
 		} else {
 			log.Printf("no route for %s", dst)
 		}
