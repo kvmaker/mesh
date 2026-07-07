@@ -30,6 +30,8 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /", s.handleCoverPage)
 	mux.HandleFunc("POST /api/devices/register", withRateLimit(s.handleRegister))
+	mux.HandleFunc("GET /api/devices", s.handleDeviceList)
+	mux.HandleFunc("GET /api/stats/devices", s.handleDeviceStats)
 	mux.HandleFunc("GET /tunnel", s.handleTunnel)
 	return mux
 }

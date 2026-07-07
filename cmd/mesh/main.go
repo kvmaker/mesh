@@ -18,7 +18,7 @@ func main() {
 		Short: "Mesh VPN 客户端",
 		Long:  "Mesh VPN 客户端 — 加入、启动、查看状态或退出 mesh 网络。",
 	}
-	root.AddCommand(joinCmd(), upCmd(), statusCmd(), leaveCmd())
+	root.AddCommand(joinCmd(), upCmd(), statusCmd(), peersCmd(), leaveCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -71,6 +71,16 @@ func leaveCmd() *cobra.Command {
 		Short: "离开 mesh 网络并删除本地配置",
 		RunE: func(c *cobra.Command, args []string) error {
 			return client.Leave()
+		},
+	}
+}
+
+func peersCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "peers",
+		Short: "查看网络中的所有设备",
+		RunE: func(c *cobra.Command, args []string) error {
+			return client.Peers()
 		},
 	}
 }

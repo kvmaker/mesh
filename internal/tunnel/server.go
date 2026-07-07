@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/maxyu/mesh/internal/config"
@@ -103,7 +104,9 @@ func (ts *TunnelServer) routePacket(pkt []byte) {
 	}
 	if err := cc.Conn.Write(context.Background(), websocket.MessageBinary, pkt); err != nil {
 		log.Printf("write to client %s: %v", cc.DeviceID, err)
+		return
 	}
+	cc.RecordTx(len(pkt))
 }
 
 // HandleWebSocket handles incoming WebSocket upgrade requests, authenticates the device,
@@ -136,7 +139,7 @@ func (ts *TunnelServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	cc := &ClientConn{Conn: conn, DeviceID: dev.ID, IP: ip}
+	cc := &ClientConn{Conn: conn, DeviceID: dev.ID, IP: ip, ConnectedAt: time.Now()}
 	ts.router.Register(ip, cc)
 	defer ts.router.Unregister(ip)
 
@@ -153,18 +156,20 @@ func (ts *TunnelServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 	defer log.Printf("device %s (%s) disconnected", dev.Name, dev.IP)
 
 	ctx := r.Context()
-	ts.clientReadLoop(ctx, conn)
+	ts.clientReadLoop(ctx, cc)
 }
 
 // clientReadLoop reads packets from a WebSocket client and routes them appropriately.
 // Packets destined for the server IP (10.100.0.1) are injected into the TUN device;
 // packets destined for other clients are forwarded directly via WS→WS routing.
-func (ts *TunnelServer) clientReadLoop(ctx context.Context, conn *websocket.Conn) {
+func (ts *TunnelServer) clientReadLoop(ctx context.Context, cc *ClientConn) {
 	for {
-		_, pkt, err := conn.Read(ctx)
+		_, pkt, err := cc.Conn.Read(ctx)
 		if err != nil {
 			return
 		}
+
+		cc.RecordRx(len(pkt))
 
 		dst, err := ExtractDstIP(pkt)
 		if err != nil {
@@ -181,9 +186,11 @@ func (ts *TunnelServer) clientReadLoop(ctx context.Context, conn *websocket.Conn
 			if _, err := ts.tun.Write(bufs, meshtun.Offset()); err != nil {
 				log.Printf("write to TUN: %v", err)
 			}
-		} else if cc, ok := ts.router.Lookup(dst); ok {
-			if err := cc.Conn.Write(ctx, websocket.MessageBinary, pkt); err != nil {
-				log.Printf("forward to client %s: %v", cc.DeviceID, err)
+		} else if dest, ok := ts.router.Lookup(dst); ok {
+			if err := dest.Conn.Write(ctx, websocket.MessageBinary, pkt); err != nil {
+				log.Printf("forward to client %s: %v", dest.DeviceID, err)
+			} else {
+				dest.RecordTx(len(pkt))
 			}
 		} else {
 			log.Printf("no route for %s", dst)
@@ -194,4 +201,9 @@ func (ts *TunnelServer) clientReadLoop(ctx context.Context, conn *websocket.Conn
 // Close shuts down the TUN device.
 func (ts *TunnelServer) Close() error {
 	return ts.tun.Close()
+}
+
+// Stats returns a snapshot of all connected clients' statistics.
+func (ts *TunnelServer) Stats() []ConnStats {
+	return ts.router.Stats()
 }

@@ -16,7 +16,7 @@ func Up(ctx context.Context) error {
 	}
 
 	wsURL := fmt.Sprintf("wss://%s/tunnel", cfg.ServerDomain)
-	tc, err := tunnel.NewTunnelClient(wsURL, cfg.DeviceSecret, cfg.DeviceIP, cfg.NetworkCIDR, 1300)
+	tc, err := tunnel.NewTunnelClient(wsURL, cfg.DeviceSecret, cfg.DeviceIP, cfg.NetworkCIDR, 1300, ConfigDir())
 	if err != nil {
 		return fmt.Errorf("setup tunnel: %w", err)
 	}
