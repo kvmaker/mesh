@@ -89,23 +89,35 @@ func (cc *ClientConn) RecordRx(size int) {
 //
 // Callers must not mutate pkt.Data after handing it to Enqueue.
 func (cc *ClientConn) Enqueue(pkt Packet) bool {
+	// Pre-check closed so we never enqueue after Close has flipped.
+	// The select below also re-checks closed so a concurrent Close cannot
+	// strand a packet in SendQueue once it has been closed.
 	if cc.closed.Load() {
 		cc.DropPackets.Add(1)
 		return false
 	}
+	// Account for the packet before sending. This avoids a window where
+	// writeLoop has already decremented QueueDepth for a previous packet
+	// while the new one has not yet been observed.
+	depth := cc.QueueDepth.Add(1)
+	for {
+		cur := cc.QueueMaxDepth.Load()
+		if depth <= cur || cc.QueueMaxDepth.CompareAndSwap(cur, depth) {
+			break
+		}
+	}
 	select {
 	case cc.SendQueue <- pkt:
-		depth := cc.QueueDepth.Add(1)
-		// Update high-water mark using a CAS-ish loop to avoid contention
-		// on the common path.
-		for {
-			cur := cc.QueueMaxDepth.Load()
-			if depth <= cur || cc.QueueMaxDepth.CompareAndSwap(cur, depth) {
-				break
-			}
-		}
 		return true
 	default:
+		// Roll back the depth bump and count it as dropped.
+		cc.QueueDepth.Add(-1)
+		cc.DropPackets.Add(1)
+		return false
+	case <-cc.Done:
+		// Connection has been closed while we were trying to enqueue.
+		// Roll back the depth bump; writeLoop will not consume this slot.
+		cc.QueueDepth.Add(-1)
 		cc.DropPackets.Add(1)
 		return false
 	}
@@ -140,17 +152,21 @@ func (cc *ClientConn) writeLoop() {
 		select {
 		case <-cc.Done:
 			// Drain remaining packets so a fast producer does not leak
-			// them silently; if a write fails here we just log.
+			// them silently. Use a fresh, bounded context here: the
+			// normal ctx is already canceled at this point, which would
+			// cause every drain write to fail with context.Canceled.
+			drainCtx, drainCancel := context.WithTimeout(context.Background(), 2*time.Second)
 			for {
 				select {
 				case pkt := <-cc.SendQueue:
 					cc.QueueDepth.Add(-1)
-					if err := cc.Conn.Write(ctx, websocket.MessageBinary, pkt.Data); err != nil {
+					if err := cc.Conn.Write(drainCtx, websocket.MessageBinary, pkt.Data); err != nil {
 						log.Printf("write to client %s during shutdown: %v", cc.DeviceID, err)
 					} else {
 						cc.RecordTx(len(pkt.Data))
 					}
 				default:
+					drainCancel()
 					return
 				}
 			}

@@ -1,10 +1,15 @@
 package tunnel
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/coder/websocket"
 )
 
 func TestRouterRegisterLookup(t *testing.T) {
@@ -204,8 +209,35 @@ func TestClientConnEnqueueDropsWhenFull(t *testing.T) {
 }
 
 func TestClientConnCloseStopsWriteLoop(t *testing.T) {
+	serverConn, clientConn := newTestWebSocketPair(t)
 	ip := netip.MustParseAddr("10.100.0.2")
-	cc := NewClientConn(nil, "dev1", ip, 1)
+	cc := NewClientConn(serverConn, "dev1", ip, 4)
+
+	// Drive a few packets through the queue. writeLoop is the only goroutine
+	// that writes to serverConn, so the client-side reads back prove the
+	// writeLoop is actually running.
+	go func() {
+		for i := 0; i < 3; i++ {
+			_ = clientConn.Write(context.Background(), websocket.MessageBinary, []byte{byte(i)})
+		}
+	}()
+	for i := 0; i < 3; i++ {
+		if !cc.Enqueue(Packet{Data: []byte{byte(i)}}) {
+			t.Fatalf("enqueue %d should succeed", i)
+		}
+	}
+	// Wait for writeLoop to drain. The single-writer model guarantees the
+	// packet is on the wire before QueueDepth returns to 0.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cc.QueueDepth.Load() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := cc.QueueDepth.Load(); got != 0 {
+		t.Fatalf("writeLoop did not drain queue, QueueDepth=%d", got)
+	}
 
 	cc.Close()
 	select {
@@ -224,14 +256,53 @@ func TestClientConnCloseStopsWriteLoop(t *testing.T) {
 }
 
 func TestClientConnCloseIdempotent(t *testing.T) {
+	serverConn, _ := newTestWebSocketPair(t)
 	ip := netip.MustParseAddr("10.100.0.2")
-	cc := NewClientConn(nil, "dev1", ip, 1)
+	cc := NewClientConn(serverConn, "dev1", ip, 1)
+
 	cc.Close()
 	cc.Close() // must not panic
 	select {
 	case <-cc.writeLoopDone:
 	case <-time.After(2 * time.Second):
 		t.Fatal("writeLoop did not exit")
+	}
+}
+
+// newTestWebSocketPair stands up a httptest server that accepts a single
+// WebSocket upgrade and returns both the server-side and client-side
+// *websocket.Conn. The test server and both conns are torn down via
+// t.Cleanup.
+func newTestWebSocketPair(t *testing.T) (serverConn, clientConn *websocket.Conn) {
+	t.Helper()
+	type acceptResult struct {
+		conn *websocket.Conn
+		err  error
+	}
+	resCh := make(chan acceptResult, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		resCh <- acceptResult{conn: conn, err: err}
+	}))
+	t.Cleanup(srv.Close)
+
+	url := "ws" + srv.URL[len("http"):]
+	cli, _, err := websocket.Dial(context.Background(), url, nil)
+	if err != nil {
+		t.Fatalf("websocket.Dial: %v", err)
+	}
+	t.Cleanup(func() { cli.CloseNow() })
+
+	select {
+	case res := <-resCh:
+		if res.err != nil {
+			t.Fatalf("websocket.Accept: %v", res.err)
+		}
+		t.Cleanup(func() { res.conn.CloseNow() })
+		return res.conn, cli
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for server-side websocket")
+		return nil, nil
 	}
 }
 
