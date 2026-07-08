@@ -1,0 +1,7 @@
+domain: "server"
+listen_addr: ":443"
+network: "10.100.0.0/24"
+data_dir: "/etc/mesh"
+cert_dir: "/etc/mesh/certs"
+tun_name: "mesh0"
+tun_mtu: 1300

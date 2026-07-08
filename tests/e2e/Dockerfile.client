@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1
+# T01: mesh 客户端镜像（多阶段构建）
+# build context 为仓库根（compose 里 context: ../..）
+
+########################################
+# Stage 1: 构建 mesh 二进制
+########################################
+FROM golang:1.25-bookworm AS builder
+
+WORKDIR /src
+
+# 先拷依赖以利用 Docker 层缓存
+COPY go.mod go.sum ./
+RUN go mod download
+
+# 拷源码并编译
+COPY . .
+RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/mesh ./cmd/mesh
+
+########################################
+# Stage 2: 运行时
+########################################
+FROM ubuntu:24.04
+
+# 装运行时依赖 + 性能测试工具（iperf3 / nuttcp / fping）
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        iproute2 \
+        iputils-ping \
+        iperf3 \
+        nuttcp \
+        fping \
+        curl \
+        jq \
+        bash \
+    && rm -rf /var/lib/apt/lists/*
+
+# 拷二进制
+COPY --from=builder /out/mesh /usr/local/bin/mesh
+
+# 拷 entrypoint（路径相对仓库根，即 build context）
+COPY tests/e2e/fixtures/entrypoint-client.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+ENTRYPOINT ["/entrypoint.sh"]
