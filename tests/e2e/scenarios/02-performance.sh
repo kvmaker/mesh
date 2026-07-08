@@ -28,17 +28,6 @@ echo "client-b mesh0 = $B_IP"
 # 防御 metrics 边界 case（iperf3 异常退出输出非 JSON）导致 jq --argjson 失败。
 num_or() { case "$1" in ''|*[!0-9.]*) echo "$2";; *) echo "$1";; esac; }
 
-# 覆盖 metrics.sh 的 rtt_stats：原实现用 grep -oP（PCRE），macOS BSD grep 不支持 -P
-# 会导致 avg/loss 恒为兜底值（0/100）。改用 sed -E（POSIX）跨平台兼容。
-rtt_stats() {
-  local c="$1" dst="$2" count="${3:-200}"
-  local tmp avg loss
-  tmp=$(dex "$c" ping -c "$count" -i 0.05 -q "$dst" 2>&1) || true
-  avg=$(echo "$tmp" | sed -nE 's|.*rtt min/avg/max/mdev = [^/]+/([^/]+)/.*|\1|p' | tail -1)
-  loss=$(echo "$tmp" | sed -nE 's|.*[^0-9]([0-9]+)% packet loss.*|\1|p' | tail -1)
-  echo "${avg:-0} ${loss:-0}"
-}
-
 # 起 iperf3 server（client-b，daemon）。先清残留再 -s -D 后台运行。
 dex mesh-client-b sh -c 'pkill iperf3 2>/dev/null || true; iperf3 -s -D'
 sleep 1

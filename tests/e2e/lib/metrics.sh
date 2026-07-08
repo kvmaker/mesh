@@ -13,14 +13,14 @@
 # 用法: rtt_stats <client-container> <dst-ip> [count]
 # - -i 0.05 间隔（20pps），-q 安静模式
 # - ping -q 最后输出: "rtt min/avg/max/mdev = x/y/z/w ms"，取 avg（斜杠分隔第 2 值）
-# - grep -oP 用 PCRE，ubuntu:24.04 默认 grep 支持
+# - sed -nE 用 POSIX ERE，跨平台兼容（macOS BSD grep 不支持 grep -oP）
 rtt_stats() {
   local c="$1" dst="$2" count="${3:-200}"
   local tmp avg loss
   tmp=$(dex "$c" ping -c "$count" -i 0.05 -q "$dst" 2>&1) || true
-  avg=$(echo "$tmp" | grep -oP 'rtt min/avg/max/mdev = [^/]+/\K[^/]+' || echo "0")
-  loss=$(echo "$tmp" | grep -oP '\K\d+(?=% packet loss)' || echo "100")
-  echo "${avg:-0} ${loss:-100}"
+  avg=$(echo "$tmp" | sed -nE 's|.*rtt min/avg/max/mdev = [^/]+/([^/]+)/.*|\1|p' | tail -1)
+  loss=$(echo "$tmp" | sed -nE 's|.*[^0-9]([0-9]+)% packet loss.*|\1|p' | tail -1)
+  echo "${avg:-0} ${loss:-0}"
 }
 
 # iperf3 TCP 吞吐（Mbps）
