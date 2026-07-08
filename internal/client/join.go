@@ -2,15 +2,19 @@ package client
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 )
 
 // Join 向服务器注册当前设备，并将返回的配置保存到本地。
 // 该操作不需要 root 权限。
-func Join(domain, tok string) error {
+//
+// insecureTLS 为真时跳过 TLS 证书校验，仅在 e2e 测试（server 使用自签证书）时使用。
+func Join(domain, tok string, insecureTLS bool) error {
 	if err := os.MkdirAll(ConfigDir(), 0700); err != nil {
 		return err
 	}
@@ -25,7 +29,14 @@ func Join(domain, tok string) error {
 	})
 	url := fmt.Sprintf("https://%s/api/devices/register", domain)
 
-	resp, err := http.Post(url, "application/json", bytes.NewReader(reqBody))
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+	if insecureTLS {
+		httpClient.Transport = &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+		}
+	}
+
+	resp, err := httpClient.Post(url, "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("connect: %w", err)
 	}
@@ -56,6 +67,7 @@ func Join(domain, tok string) error {
 		DeviceIP:     regResp.AssignedIP,
 		DeviceID:     regResp.DeviceID,
 		NetworkCIDR:  regResp.NetworkCIDR,
+		InsecureTLS:  insecureTLS,
 	}
 	if err := SaveClientConfig(cfg); err != nil {
 		return err

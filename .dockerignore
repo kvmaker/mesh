@@ -1,0 +1,11 @@
+# Docker build context 排除（T01 code review I-3）
+# 两个 Dockerfile 都用 context: ../..（仓库根），这里裁掉无关内容
+# 必须保留进 context：internal/ cmd/ go.mod go.sum tests/e2e/fixtures/
+.git/
+bin/
+docs/
+.firecrawl/
+graphify-out/
+*.md
+.DS_Store
+.claude/

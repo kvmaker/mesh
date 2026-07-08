@@ -1,0 +1,72 @@
+# T01: mesh VPN e2e 测试编排
+# 3 容器：server / client-a / client-b
+# 全部 privileged + NET_ADMIN/NET_RAW + /dev/net/tun（server 也起 TUN 做中继）
+#
+# 用法：
+#   MESH_TOKEN=<tok> docker compose -f tests/e2e/docker-compose.yml up -d
+#   docker compose -f tests/e2e/docker-compose.yml down
+
+services:
+  server:
+    build:
+      context: ../..
+      dockerfile: tests/e2e/Dockerfile.server
+    image: mesh-e2e/server:latest
+    container_name: mesh-server
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    networks:
+      meshnet:
+        aliases:
+          - server
+    # 暴露 443 供 host 排障（可选）
+    ports:
+      - "8443:443"
+
+  client-a:
+    build:
+      context: ../..
+      dockerfile: tests/e2e/Dockerfile.client
+    image: mesh-e2e/client:latest
+    container_name: mesh-client-a
+    hostname: client-a
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      - server
+    environment:
+      MESH_TOKEN: ${MESH_TOKEN:?MESH_TOKEN must be set}
+    networks:
+      - meshnet
+
+  client-b:
+    build:
+      context: ../..
+      dockerfile: tests/e2e/Dockerfile.client
+    image: mesh-e2e/client:latest
+    container_name: mesh-client-b
+    hostname: client-b
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    depends_on:
+      - server
+    environment:
+      MESH_TOKEN: ${MESH_TOKEN:?MESH_TOKEN must be set}
+    networks:
+      - meshnet
+
+networks:
+  meshnet:
+    driver: bridge

@@ -285,6 +285,30 @@ mesh leave                          # 注销并清理
 | 服务器 | 10.100.0.1 |
 | 客户端（自动分配） | 10.100.0.2 ~ 10.100.0.254 |
 
+## e2e 测试
+
+基于 Docker 的端到端测试（3 容器：1 server + 2 client），验证连通性、性能、故障恢复。
+
+```bash
+# 快速模式（连通性 + 性能，约 2-3 分钟）
+bash tests/e2e/run.sh --quick
+
+# 全量（含故障场景）
+bash tests/e2e/run.sh --all
+
+# 单个场景
+bash tests/e2e/run.sh --scenario 01
+
+# 性能硬门槛（release 用）
+STRICT=1 bash tests/e2e/run.sh --quick
+```
+
+结果输出到 `tests/e2e/results/<timestamp>/`，含各场景 JSON 指标和 `summary.txt`。
+
+> 注：macOS 本机若 docker 走 colima，需先 `export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock`；CI（ubuntu-latest）无需。
+
+详见 `docs/superpowers/specs/2026-07-08-e2e-docker-design.md`。
+
 ## 技术栈
 
 - Go 1.22+

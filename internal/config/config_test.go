@@ -25,3 +25,31 @@ func TestLoad(t *testing.T) {
 		t.Fatalf("unexpected: %+v", cfg)
 	}
 }
+
+func TestLoadTLSTestModeFromEnv(t *testing.T) {
+	cases := []struct {
+		name string
+		env  string
+		want bool
+	}{
+		{"off", "off", false},
+		{"empty", "", false},
+		{"true", "true", true},
+		{"self", "self", true},
+		{"no_invalid", "no", false},
+		{"uppercase_off", "OFF", false},
+		{"trim_spaces", " off ", false},
+		{"on", "on", true},
+		{"1", "1", true},
+		{"garbage", "garbage", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("MESH_TEST_TLS", tc.env)
+			cfg := Default()
+			if cfg.TLSTestMode != tc.want {
+				t.Fatalf("MESH_TEST_TLS=%q: expected TLSTestMode=%v, got %v", tc.env, tc.want, cfg.TLSTestMode)
+			}
+		})
+	}
+}

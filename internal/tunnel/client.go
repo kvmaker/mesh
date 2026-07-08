@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -18,11 +19,12 @@ import (
 // TunnelClient connects to the mesh VPN server via WebSocket and shuttles
 // IP packets through a local TUN device.
 type TunnelClient struct {
-	serverURL string
-	secret    string
-	mtu       int
-	tun       meshtun.Device
-	statusDir string
+	serverURL  string
+	secret     string
+	mtu        int
+	tun        meshtun.Device
+	statusDir  string
+	httpClient *http.Client
 
 	connected   atomic.Int32
 	connectedAt atomic.Int64 // unix nano
@@ -36,7 +38,9 @@ type TunnelClient struct {
 
 // NewTunnelClient creates a TunnelClient, initializes the TUN device, and
 // configures the network interface.
-func NewTunnelClient(serverURL, secret, localIP, network string, mtu int, statusDir string) (*TunnelClient, error) {
+//
+// tlsConfig 可为 nil（生产环境走系统默认证书校验）；e2e 测试传 InsecureSkipVerify 的配置。
+func NewTunnelClient(serverURL, secret, localIP, network string, mtu int, statusDir string, tlsConfig *tls.Config) (*TunnelClient, error) {
 	tunName := meshtun.DefaultTUNName()
 	dev, name, err := meshtun.CreateTUN(tunName, mtu)
 	if err != nil {
@@ -52,6 +56,8 @@ func NewTunnelClient(serverURL, secret, localIP, network string, mtu int, status
 		mtu:       mtu,
 		tun:       dev,
 		statusDir: statusDir,
+		// 复用单个 http.Client，避免每次重连新建 Transport 造成空闲连接/fd 泄漏。
+		httpClient: &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}},
 	}, nil
 }
 
@@ -60,8 +66,20 @@ func NewTunnelClient(serverURL, secret, localIP, network string, mtu int, status
 // is cancelled.
 func (tc *TunnelClient) Run(ctx context.Context) error {
 	go tc.writeStatusLoop(ctx)
+
+	// B01: 持久的 TUN 读 goroutine，跨重连复用同一个 TUN fd。tun.Read 在
+	// 这里执行并通过 pktCh 投递包，connect 的 main loop 用 select 监听
+	// pktCh + ctx.Done，从而能在无背景流量时响应 ctx cancel（SIGTERM/连接
+	// 丢失），不再阻塞在 tun.Read 上。
+	//
+	// 不采用 "ctx cancel 时 close TUN" 方案：close 后 TUN fd 永久失效，Run
+	// 的进程内重连会因 tun.Read 立即报错而无限失败。channel 解耦让 TUN fd
+	// 生命周期独立于 WS 连接，重连时不需重建 TUN。
+	pktCh := make(chan []byte, 128)
+	go tc.tunReadLoop(ctx, pktCh)
+
 	for {
-		err := tc.connect(ctx)
+		err := tc.connect(ctx, pktCh)
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
@@ -75,14 +93,47 @@ func (tc *TunnelClient) Run(ctx context.Context) error {
 	}
 }
 
+// tunReadLoop 持续从 TUN 读包并通过 pktCh 投递。在 Run 启动，跨重连复用
+// 同一个 TUN fd，直到根 ctx 取消（进程退出）或 TUN 关闭/读出错。
+//
+// 解耦目的：把会阻塞的 tun.Read 从 connect 的 main loop 移出，使 main loop
+// 能用 select 响应 ctx cancel。connect 退出（重连）时本 goroutine 继续运行、
+// 继续持有 TUN fd；重连后的新 connect 继续从 pktCh 读，TUN 无需重建。
+func (tc *TunnelClient) tunReadLoop(ctx context.Context, pktCh chan<- []byte) {
+	bufs := make([][]byte, 1)
+	bufs[0] = make([]byte, meshtun.Offset()+tc.mtu+100)
+	sizes := make([]int, 1)
+	for {
+		n, err := tc.tun.Read(bufs, sizes, meshtun.Offset())
+		if err != nil {
+			// ctx 取消（正常关闭）静默退出；其余为 unexpected error，记录日志后退出。
+			if ctx.Err() == nil {
+				log.Printf("tun read error: %v", err)
+			}
+			return
+		}
+		if n == 0 {
+			continue
+		}
+		pkt := make([]byte, sizes[0])
+		copy(pkt, bufs[0][meshtun.Offset():meshtun.Offset()+sizes[0]])
+		select {
+		case <-ctx.Done():
+			return
+		case pktCh <- pkt:
+		}
+	}
+}
+
 // connect dials the WebSocket server and runs the bidirectional packet loop
 // until either the context is cancelled or an error occurs.
-func (tc *TunnelClient) connect(ctx context.Context) error {
+func (tc *TunnelClient) connect(ctx context.Context, pktCh <-chan []byte) error {
 	header := http.Header{}
 	header.Set("Authorization", "Bearer "+tc.secret)
 
 	conn, _, err := websocket.Dial(ctx, tc.serverURL, &websocket.DialOptions{
 		HTTPHeader: header,
+		HTTPClient: tc.httpClient,
 	})
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
@@ -137,38 +188,23 @@ func (tc *TunnelClient) connect(ctx context.Context) error {
 		}
 	}()
 
-	// TUN → WS: main loop reads packets from TUN and sends over WebSocket.
-	bufs := make([][]byte, 1)
-	bufs[0] = make([]byte, meshtun.Offset()+tc.mtu+100)
-	sizes := make([]int, 1)
-
+	// TUN → WS: main loop reads packets (produced by the persistent
+	// tunReadLoop via pktCh) and sends over WebSocket.
+	//
+	// B01: tun.Read 已移到 tunReadLoop，main loop 只需 select pktCh + ctx.Done，
+	// 无背景流量时也能立即响应 ctx cancel（SIGTERM/连接丢失），不再阻塞。
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		default:
-		}
-
-		n, err := tc.tun.Read(bufs, sizes, meshtun.Offset())
-		if err != nil {
-			if ctx.Err() != nil {
-				return ctx.Err()
+		case pkt := <-pktCh:
+			if err := conn.Write(ctx, websocket.MessageBinary, pkt); err != nil {
+				return fmt.Errorf("write WS: %w", err)
 			}
-			return fmt.Errorf("read TUN: %w", err)
+			tc.txPackets.Add(1)
+			tc.txBytes.Add(uint64(len(pkt)))
+			tc.lastActive.Store(time.Now().UnixNano())
 		}
-		if n == 0 {
-			continue
-		}
-
-		pkt := make([]byte, sizes[0])
-		copy(pkt, bufs[0][meshtun.Offset():meshtun.Offset()+sizes[0]])
-
-		if err := conn.Write(ctx, websocket.MessageBinary, pkt); err != nil {
-			return fmt.Errorf("write WS: %w", err)
-		}
-		tc.txPackets.Add(1)
-		tc.txBytes.Add(uint64(len(pkt)))
-		tc.lastActive.Store(time.Now().UnixNano())
 	}
 }
 
