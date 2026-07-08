@@ -62,7 +62,7 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 // ListenAndServeTLS starts the HTTPS server.
 //
 // 生产环境使用 autocert（Let's Encrypt）+ :80 ACME challenge listener。
-// 当 cfg.TLSTestMode 为真（即 e2e 测试设置了 MESH_TEST_TLS=off）时，
+// 当 cfg.TLSTestMode 为真（即 e2e 测试设置了 MESH_TEST_TLS=on）时，
 // 改用内存自签证书，完全不依赖 Let's Encrypt，也不监听 :80。
 func (s *Server) ListenAndServeTLS(ctx context.Context) error {
 	srv := &http.Server{

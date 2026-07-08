@@ -27,7 +27,7 @@ type Config struct {
 func (c *Config) applyTestMode() {
 	v := strings.ToLower(strings.TrimSpace(os.Getenv("MESH_TEST_TLS")))
 	switch v {
-	case "off", "1", "true", "on", "self":
+	case "1", "true", "on", "self":
 		c.TLSTestMode = true
 	}
 }

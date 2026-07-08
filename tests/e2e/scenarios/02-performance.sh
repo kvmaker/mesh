@@ -18,6 +18,13 @@ echo '{}' >"$JSON"
 LOG="$OUT/02-performance.log"; : >"$LOG"
 exec > >(tee -a "$LOG") 2>&1
 
+# cleanup trap：脚本退出时（正常 + 异常/信号）收尾，防止 netem 残留。
+cleanup_02() {
+  dex mesh-client-b pkill iperf3 2>/dev/null || true
+  dex mesh-client-b sh -c 'source /usr/local/bin/netem-preset.sh 2>/dev/null; netem baseline' 2>/dev/null || true
+}
+trap cleanup_02 EXIT
+
 echo "=== Scenario 02: performance ==="
 wait_for_client mesh-client-a
 wait_for_client mesh-client-b

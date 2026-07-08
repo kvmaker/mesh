@@ -106,7 +106,10 @@ func (tc *TunnelClient) tunReadLoop(ctx context.Context, pktCh chan<- []byte) {
 	for {
 		n, err := tc.tun.Read(bufs, sizes, meshtun.Offset())
 		if err != nil {
-			// ctx 取消（tunFile 被外层 Close）/ TUN 关闭 / 读错误：退出。
+			// ctx 取消（正常关闭）静默退出；其余为 unexpected error，记录日志后退出。
+			if ctx.Err() == nil {
+				log.Printf("tun read error: %v", err)
+			}
 			return
 		}
 		if n == 0 {

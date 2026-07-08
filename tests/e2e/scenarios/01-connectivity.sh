@@ -22,7 +22,11 @@ wait_for_client mesh-client-b
 
 # docker-compose.yml 里 client 服务用 ${MESH_TOKEN:?}，stop/start 等编排命令
 # 解析 compose 文件时也需要这个 env 存在（值不校验）。读真实 token 注入。
-export MESH_TOKEN="$(get_token)"
+# 拆分 if + export，避免 ${MESH_TOKEN:-$(get_token)} 内的 get_token 失败被 set -e 掩盖。
+if [ -z "${MESH_TOKEN:-}" ]; then
+  MESH_TOKEN="$(get_token)"
+fi
+export MESH_TOKEN
 
 SERVER_IP="10.100.0.1"
 # mesh IP 不保证顺序：动态读 mesh0 IPv4

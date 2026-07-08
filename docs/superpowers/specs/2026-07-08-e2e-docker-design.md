@@ -112,7 +112,7 @@ tests/e2e/
 ### 6.1 TLS / 证书
 
 - 容器内 server 拿不到 Let's Encrypt 证书。
-- 引入 `MESH_TEST_TLS=off` 开关（推荐在 `internal/config` 落地）：
+- 引入 `MESH_TEST_TLS=on` 开关（推荐在 `internal/config` 落地）：
   - server 跳过 `acme/autocert`，改用自签证书。
   - client `mesh join` 端允许自签（`InsecureSkipVerify`，已在 `internal/client/peers.go` 使用过）。
 - 退出测试时无需清理证书目录，容器销毁即可。
@@ -302,7 +302,7 @@ tests/e2e/                  完整 e2e（容器 + TUN + tc + 性能）
 | `tc` 在 macOS host 不可用 | e2e 全在 Linux 容器内 |
 | Docker privileged 模式安全风险 | 仅 CI/本地开发，文档明示 |
 | 性能数据受 host 负载影响 | 软门槛 + 历史趋势对比 |
-| server 拿不到 ACME 证书 | 引入 `MESH_TEST_TLS=off` 开关 |
+| server 拿不到 ACME 证书 | 引入 `MESH_TEST_TLS=on` 开关 |
 | `mesh join` 在 TUN 起来前需要 DNS | 容器内 `/etc/hosts` 注入 server 别名 |
 | 长时间 iperf 占用 CI 资源 | 默认 30s 短流，CI 用 `--quick` 模式 |
 

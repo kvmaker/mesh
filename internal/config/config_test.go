@@ -32,13 +32,13 @@ func TestLoadTLSTestModeFromEnv(t *testing.T) {
 		env  string
 		want bool
 	}{
-		{"off", "off", true},
+		{"off", "off", false},
 		{"empty", "", false},
 		{"true", "true", true},
 		{"self", "self", true},
 		{"no_invalid", "no", false},
-		{"uppercase_off", "OFF", true},
-		{"trim_spaces", " off ", true},
+		{"uppercase_off", "OFF", false},
+		{"trim_spaces", " off ", false},
 		{"on", "on", true},
 		{"1", "1", true},
 		{"garbage", "garbage", false},

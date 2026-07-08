@@ -45,6 +45,7 @@ func createTUNNative(name string, mtu int) (Device, string, error) {
 	file := os.NewFile(uintptr(fd), "/dev/net/tun")
 	dev, err := wgtun.CreateTUNFromFile(file, mtu)
 	if err != nil {
+		file.Close() // CreateTUNFromFile 失败时确保 fd 不泄漏
 		return nil, "", fmt.Errorf("create TUN %s: %w", name, err)
 	}
 	actualName, err := dev.Name()
