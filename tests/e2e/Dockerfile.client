@@ -42,4 +42,8 @@ COPY --from=builder /out/mesh /usr/local/bin/mesh
 COPY tests/e2e/fixtures/entrypoint-client.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
+# 拷 netem 预设库（场景脚本 source /usr/local/bin/netem-preset.sh 后调用 netem <preset>）
+COPY tests/e2e/fixtures/netem.sh /usr/local/bin/netem-preset.sh
+RUN chmod +x /usr/local/bin/netem-preset.sh
+
 ENTRYPOINT ["/entrypoint.sh"]
