@@ -33,6 +33,7 @@ services:
       dockerfile: tests/e2e/Dockerfile.client
     image: mesh-e2e/client:latest
     container_name: mesh-client-a
+    hostname: client-a
     privileged: true
     cap_add:
       - NET_ADMIN
@@ -43,7 +44,6 @@ services:
       - server
     environment:
       MESH_TOKEN: ${MESH_TOKEN:?MESH_TOKEN must be set}
-      HOSTNAME_ID: client-a
     networks:
       - meshnet
 
@@ -53,6 +53,7 @@ services:
       dockerfile: tests/e2e/Dockerfile.client
     image: mesh-e2e/client:latest
     container_name: mesh-client-b
+    hostname: client-b
     privileged: true
     cap_add:
       - NET_ADMIN
@@ -63,7 +64,6 @@ services:
       - server
     environment:
       MESH_TOKEN: ${MESH_TOKEN:?MESH_TOKEN must be set}
-      HOSTNAME_ID: client-b
     networks:
       - meshnet
 

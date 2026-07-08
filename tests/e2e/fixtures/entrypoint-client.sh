@@ -12,6 +12,10 @@ for i in $(seq 1 60); do
   fi
   sleep 1
 done
+if ! curl -kfsS https://server:443/api/devices >/dev/null 2>&1; then
+  echo "ERROR: server did not become ready within 60s" >&2
+  exit 1
+fi
 
 : "${MESH_TOKEN:?MESH_TOKEN must be set}"
 mesh join server --token "$MESH_TOKEN" --insecure
