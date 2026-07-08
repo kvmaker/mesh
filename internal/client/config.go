@@ -14,6 +14,7 @@ type ClientConfig struct {
 	DeviceIP     string `json:"device_ip"`
 	DeviceID     string `json:"device_id"`
 	NetworkCIDR  string `json:"network_cidr"`
+	InsecureTLS  bool   `json:"insecure_tls,omitempty"`
 }
 
 // ConfigDir 返回客户端配置目录（~/.mesh）。

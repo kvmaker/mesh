@@ -2,6 +2,7 @@ package client
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 
 	"github.com/maxyu/mesh/internal/tunnel"
@@ -16,7 +17,13 @@ func Up(ctx context.Context) error {
 	}
 
 	wsURL := fmt.Sprintf("wss://%s/tunnel", cfg.ServerDomain)
-	tc, err := tunnel.NewTunnelClient(wsURL, cfg.DeviceSecret, cfg.DeviceIP, cfg.NetworkCIDR, 1300, ConfigDir())
+
+	var tlsCfg *tls.Config
+	if cfg.InsecureTLS {
+		tlsCfg = &tls.Config{InsecureSkipVerify: true}
+	}
+
+	tc, err := tunnel.NewTunnelClient(wsURL, cfg.DeviceSecret, cfg.DeviceIP, cfg.NetworkCIDR, 1300, ConfigDir(), tlsCfg)
 	if err != nil {
 		return fmt.Errorf("setup tunnel: %w", err)
 	}

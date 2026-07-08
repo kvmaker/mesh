@@ -26,12 +26,13 @@ func main() {
 
 func joinCmd() *cobra.Command {
 	var tok string
+	var insecure string
 	cmd := &cobra.Command{
 		Use:   "join <domain>",
 		Args:  cobra.ExactArgs(1),
 		Short: "向服务器注册并加入 mesh 网络（无需 root）",
 		RunE: func(c *cobra.Command, args []string) error {
-			if err := client.Join(args[0], tok); err != nil {
+			if err := client.Join(args[0], tok, insecure != ""); err != nil {
 				return err
 			}
 			fmt.Println("Now run 'sudo mesh up' to start the tunnel.")
@@ -39,6 +40,7 @@ func joinCmd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&tok, "token", "", "注册令牌（由服务器管理员提供）")
+	cmd.Flags().StringVar(&insecure, "insecure", "", "跳过 TLS 证书校验（仅用于 e2e 测试，任意非空值启用）")
 	_ = cmd.MarkFlagRequired("token")
 	return cmd
 }

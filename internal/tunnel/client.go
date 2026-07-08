@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -23,6 +24,7 @@ type TunnelClient struct {
 	mtu       int
 	tun       meshtun.Device
 	statusDir string
+	tlsConfig *tls.Config
 
 	connected   atomic.Int32
 	connectedAt atomic.Int64 // unix nano
@@ -36,7 +38,9 @@ type TunnelClient struct {
 
 // NewTunnelClient creates a TunnelClient, initializes the TUN device, and
 // configures the network interface.
-func NewTunnelClient(serverURL, secret, localIP, network string, mtu int, statusDir string) (*TunnelClient, error) {
+//
+// tlsConfig 可为 nil（生产环境走系统默认证书校验）；e2e 测试传 InsecureSkipVerify 的配置。
+func NewTunnelClient(serverURL, secret, localIP, network string, mtu int, statusDir string, tlsConfig *tls.Config) (*TunnelClient, error) {
 	tunName := meshtun.DefaultTUNName()
 	dev, name, err := meshtun.CreateTUN(tunName, mtu)
 	if err != nil {
@@ -52,6 +56,7 @@ func NewTunnelClient(serverURL, secret, localIP, network string, mtu int, status
 		mtu:       mtu,
 		tun:       dev,
 		statusDir: statusDir,
+		tlsConfig: tlsConfig,
 	}, nil
 }
 
@@ -83,6 +88,7 @@ func (tc *TunnelClient) connect(ctx context.Context) error {
 
 	conn, _, err := websocket.Dial(ctx, tc.serverURL, &websocket.DialOptions{
 		HTTPHeader: header,
+		HTTPClient: &http.Client{Transport: &http.Transport{TLSClientConfig: tc.tlsConfig}},
 	})
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)

@@ -25,3 +25,19 @@ func TestLoad(t *testing.T) {
 		t.Fatalf("unexpected: %+v", cfg)
 	}
 }
+
+func TestLoadTLSTestModeFromEnv(t *testing.T) {
+	t.Setenv("MESH_TEST_TLS", "off")
+	cfg := Default()
+	cfg.applyTestMode()
+	if !cfg.TLSTestMode {
+		t.Fatal("expected TLSTestMode=true when MESH_TEST_TLS=off")
+	}
+
+	t.Setenv("MESH_TEST_TLS", "")
+	cfg2 := Default()
+	cfg2.applyTestMode()
+	if cfg2.TLSTestMode {
+		t.Fatal("expected TLSTestMode=false when MESH_TEST_TLS unset")
+	}
+}
