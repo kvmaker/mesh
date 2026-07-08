@@ -8,13 +8,22 @@ import (
 	"syscall"
 )
 
-// acquireInstanceLock 抢占 ConfigDir 下 mesh.lock 的排他锁。
+// acquireInstanceLock 抢占 /var/run/mesh.lock 排他锁。
 //
-// 成功时返回非 nil 的 *os.File，调用方负责 defer Close；fd 关闭时内核自动
-// 释放 flock，无需清理 stale lock。返回 syscall.EWOULDBLOCK 时表示另一
-// 个 mesh up 已在运行，调用方应直接返回错误退出。
+// 用 /var/run 而不是 ~/.mesh：launchd / sudo / sudo -i / sudo -u 等
+// 不同调用方式下进程的 $HOME 会变化（root 默认 /var/root，普通用户
+// /Users/<name>，sudo -i 还会覆盖 HOME），依赖 $HOME 会让锁路径分裂，
+// 多份 mesh up 实例共存。/var/run 是 root 可写的固定路径，对所有调
+// 用方式统一。
+//
+// mesh up 本身需要 root 权限创建 TUN 设备，所以路径使用 root 才能写入
+// 的位置是合理的。
+//
+// 成功时返回非 nil 的 *os.File，调用方负责 defer Close；fd 关闭时内核
+// 自动释放 flock，无需清理 stale lock。返回 syscall.EWOULDBLOCK 时表示
+// 另一个 mesh up 已在运行，调用方应直接返回错误退出。
 func acquireInstanceLock() (*os.File, error) {
-	return acquireInstanceLockAt(filepath.Join(ConfigDir(), "mesh.lock"))
+	return acquireInstanceLockAt("/var/run/mesh.lock")
 }
 
 // acquireInstanceLockAt 是 acquireInstanceLock 的可注入路径版本，方便单测
