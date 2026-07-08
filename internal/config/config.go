@@ -33,7 +33,7 @@ func (c *Config) applyTestMode() {
 }
 
 func Default() *Config {
-	return &Config{
+	cfg := &Config{
 		Domain:     "localhost",
 		ListenAddr: ":443",
 		Network:    "10.100.0.0/24",
@@ -42,6 +42,10 @@ func Default() *Config {
 		TunName:    "mesh0",
 		TunMTU:     1300,
 	}
+	// 在这里调用，确保所有获取 Config 的路径（Default 直用、Load 成功、Load 失败回退）
+	// 都能读取 MESH_TEST_TLS 环境变量，e2e 测试模式下不会误走 Let's Encrypt。
+	cfg.applyTestMode()
+	return cfg
 }
 
 func Load(path string) (*Config, error) {
@@ -53,6 +57,5 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
-	cfg.applyTestMode()
 	return cfg, nil
 }

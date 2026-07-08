@@ -19,12 +19,12 @@ import (
 // TunnelClient connects to the mesh VPN server via WebSocket and shuttles
 // IP packets through a local TUN device.
 type TunnelClient struct {
-	serverURL string
-	secret    string
-	mtu       int
-	tun       meshtun.Device
-	statusDir string
-	tlsConfig *tls.Config
+	serverURL  string
+	secret     string
+	mtu        int
+	tun        meshtun.Device
+	statusDir  string
+	httpClient *http.Client
 
 	connected   atomic.Int32
 	connectedAt atomic.Int64 // unix nano
@@ -56,7 +56,8 @@ func NewTunnelClient(serverURL, secret, localIP, network string, mtu int, status
 		mtu:       mtu,
 		tun:       dev,
 		statusDir: statusDir,
-		tlsConfig: tlsConfig,
+		// 复用单个 http.Client，避免每次重连新建 Transport 造成空闲连接/fd 泄漏。
+		httpClient: &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}},
 	}, nil
 }
 
@@ -88,7 +89,7 @@ func (tc *TunnelClient) connect(ctx context.Context) error {
 
 	conn, _, err := websocket.Dial(ctx, tc.serverURL, &websocket.DialOptions{
 		HTTPHeader: header,
-		HTTPClient: &http.Client{Transport: &http.Transport{TLSClientConfig: tc.tlsConfig}},
+		HTTPClient: tc.httpClient,
 	})
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)

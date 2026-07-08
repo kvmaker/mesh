@@ -23,9 +23,15 @@ func Peers() error {
 		return fmt.Errorf("not registered; run 'mesh join' first")
 	}
 
+	// 仅在 e2e 测试模式（join 时带 --insecure）下跳过证书校验，
+	// 生产环境必须正常校验 Let's Encrypt 证书。
+	tlsCfg := &tls.Config{}
+	if cfg.InsecureTLS {
+		tlsCfg.InsecureSkipVerify = true
+	}
 	client := &http.Client{
 		Timeout:   5 * time.Second,
-		Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}},
+		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
 	resp, err := client.Get(fmt.Sprintf("https://%s/api/devices", cfg.ServerDomain))
 	if err != nil {
