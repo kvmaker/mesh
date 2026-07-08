@@ -18,7 +18,7 @@ rtt_stats() {
   local c="$1" dst="$2" count="${3:-200}"
   local tmp avg loss
   tmp=$(dex "$c" ping -c "$count" -i 0.05 -q "$dst" 2>&1) || true
-  avg=$(echo "$tmp" | grep -oP 'rtt min/avg/max/mdev = \K[^/]+' || echo "0")
+  avg=$(echo "$tmp" | grep -oP 'rtt min/avg/max/mdev = [^/]+/\K[^/]+' || echo "0")
   loss=$(echo "$tmp" | grep -oP '\K\d+(?=% packet loss)' || echo "100")
   echo "${avg:-0} ${loss:-100}"
 }
