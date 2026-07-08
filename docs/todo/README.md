@@ -8,6 +8,7 @@
 |------|------|------|
 | P | performance | 当前中转架构下的程序级性能、延迟、吞吐和可观测性优化 |
 | A | architecture | 参考 Tailscale / ZeroTier / Cloudflare One 的 Mesh 架构演进方向 |
+| B | bug | e2e/codereview/线上发现的 mesh 缺陷修复（功能坏了，必须修） |
 
 ## 状态标记
 
@@ -29,6 +30,7 @@
 |------|--------|------|--------|
 | performance | 1 | 10 | 10% |
 | architecture | 0 | 12 | 0% |
+| bug | 0 | 1 | 0% |
 
 ## 目录结构
 
