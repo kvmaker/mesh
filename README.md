@@ -20,6 +20,49 @@
 └─────────┘                            └──────────┘                          └─────────┘
 ```
 
+### 完整报文转发示意
+
+以 `Client A = 10.100.0.2` ping `Client B = 10.100.0.3` 为例，应用看到的是普通内网 IP 通信；Mesh 只负责把原始 IP 包装进 WebSocket/TLS 隧道，中间不做 NAT，也不改写源/目的 IP。
+
+```mermaid
+sequenceDiagram
+    participant AppA as Client A 应用<br/>ping 10.100.0.3
+    participant TunA as Client A TUN<br/>10.100.0.2
+    participant MeshA as mesh client A
+    participant Server as meshd server<br/>wss://domain/tunnel
+    participant MeshB as mesh client B
+    participant TunB as Client B TUN<br/>10.100.0.3
+    participant KernelB as Client B 内核<br/>ICMP 处理
+
+    AppA->>TunA: 生成 ICMP Echo Request<br/>IP src=10.100.0.2 dst=10.100.0.3
+    TunA->>MeshA: 读出原始 IP 包
+    MeshA->>Server: WebSocket Binary Frame<br/>payload = 原始 IP 包<br/>外层 = TLS/TCP/公网 IP
+    Server->>Server: 解析 IP 头 dst=10.100.0.3<br/>查询在线客户端路由表
+    Server->>MeshB: 转发同一个 WebSocket Binary Frame<br/>不修改原始 IP 包
+    MeshB->>TunB: 写入原始 IP 包
+    TunB->>KernelB: 内核收到目的为本机的 ICMP Echo Request
+    KernelB->>TunB: 生成 ICMP Echo Reply<br/>IP src=10.100.0.3 dst=10.100.0.2
+    TunB->>MeshB: 读出回包原始 IP 包
+    MeshB->>Server: WebSocket Binary Frame<br/>payload = Echo Reply IP 包
+    Server->>Server: 解析 dst=10.100.0.2<br/>查到 Client A 的连接
+    Server->>MeshA: 转发 Echo Reply IP 包
+    MeshA->>TunA: 写入原始 IP 包
+    TunA->>AppA: ping 收到回复
+```
+
+报文在不同层看到的形态大致如下：
+
+| 位置 | 报文形态 | 说明 |
+|------|----------|------|
+| Client A 应用/内核 | `ICMP Echo Request` inside `IP(10.100.0.2 → 10.100.0.3)` | 用户执行的普通 `ping` |
+| Client A TUN → mesh | 原始 IP 包 | TUN 中读出的就是完整 IP 包 |
+| mesh client → server | `WebSocket Binary Frame(payload=原始 IP 包)` inside `TLS/TCP/公网 IP` | 对外表现为标准 HTTPS/WSS 流量 |
+| server 内部 | 原始 IP 包 | server 只解析 IP 头里的目的地址做路由决策 |
+| server → Client B | `WebSocket Binary Frame(payload=同一个原始 IP 包)` | 不做 NAT，不重写 `src/dst` |
+| Client B TUN/内核 | `ICMP Echo Request` inside `IP(10.100.0.2 → 10.100.0.3)` | 内核像收到普通内网包一样处理并生成回包 |
+
+如果 ping 的目标是服务器自身 `10.100.0.1`，server 发现目的地址等于自己的 TUN IP 后，会把包写入 server TUN，让服务器内核处理；服务器内核生成的 Echo Reply 再由 server 从 TUN 读出，并按目的地址转发回对应客户端。
+
 ## 安装
 
 ### 一键安装（推荐）
