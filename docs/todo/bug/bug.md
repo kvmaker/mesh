@@ -6,8 +6,8 @@
 
 | ID | 标题 | 优先级 | 状态 | 详细分析 |
 |----|------|--------|------|----------|
-| B00 | Linux TUN IFF_VNET_HDR offload 导致 TCP checksum 损坏（TCP over mesh 全断） | P0 | [ ] | [B00.md](B00.md) |
-| B01 | TunnelClient main loop 卡 tun.Read，无背景流量时 SIGTERM 不退出/不自动重连 | P1 | [ ] | [B01.md](B01.md) |
+| B00 | Linux TUN IFF_VNET_HDR offload 导致 TCP checksum 损坏（TCP over mesh 全断） | P0 | [x] | [B00.md](B00.md) |
+| B01 | TunnelClient main loop 卡 tun.Read，无背景流量时 SIGTERM 不退出/不自动重连 | P1 | [x] | [B01.md](B01.md) |
 
 ---
 
@@ -25,5 +25,5 @@ mesh 在 Linux 上所有 TCP over mesh 流量完全不可用（~0 Mbps），UDP/
 
 ## 推荐执行顺序
 
-1. B00 — TCP checksum（P0，阻塞 mesh Linux TCP 可用性）
-2. B01 — main loop ctx cancel 死锁（P1，影响优雅退出/故障重连可靠性）
+1. ~~B00 — TCP checksum（P0）~~ ✅ 已修复（commit 4b4a943，TCP 877Mbps）
+2. ~~B01 — main loop ctx cancel 死锁（P1）~~ ✅ 已修复（commit a3868b8，SIGTERM 116ms）
