@@ -52,7 +52,10 @@ func upCmd() *cobra.Command {
 		Use:   "up",
 		Short: "启动 VPN 隧道（需要 root 权限）",
 		RunE: func(c *cobra.Command, args []string) error {
-			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+			// 同时监听 SIGHUP：用户在前台终端运行 `sudo mesh up` 后关闭终端
+			// 窗口时，内核会向前台进程组发 SIGHUP；不监听会导致 mesh 进程
+			// 残留（孤儿化）继续持有 TUN 设备和 WebSocket 连接。
+			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 			defer cancel()
 			return client.Up(ctx)
 		},
