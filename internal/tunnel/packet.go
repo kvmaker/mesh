@@ -5,6 +5,17 @@ import (
 	"net/netip"
 )
 
+// DefaultSendQueueSize is the per-connection send queue size used by the
+// async forwarding model introduced in TODO P02.
+const DefaultSendQueueSize = 1024
+
+// Packet carries an IP packet through the per-connection send queue.
+// It owns its own byte slice; callers must not mutate Data after handing it
+// to Enqueue.
+type Packet struct {
+	Data []byte
+}
+
 // ExtractDstIP extracts the destination IP address from an IP packet header.
 // Supports both IPv4 and IPv6 packets.
 func ExtractDstIP(pkt []byte) (netip.Addr, error) {

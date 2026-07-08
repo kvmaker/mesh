@@ -1,9 +1,15 @@
 package tunnel
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"net/netip"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/coder/websocket"
 )
 
 func TestRouterRegisterLookup(t *testing.T) {
@@ -153,5 +159,181 @@ func TestRouterUnregisterNonexistent(t *testing.T) {
 	_, ok := r.Lookup(ip)
 	if ok {
 		t.Fatal("should still not find after unregistering nonexistent IP")
+	}
+}
+
+// --- P02: async send queue / single-writer tests ---
+
+func TestClientConnEnqueueSuccess(t *testing.T) {
+	ip := netip.MustParseAddr("10.100.0.2")
+	cc := NewClientConn(nil, "dev1", ip, 4)
+	t.Cleanup(cc.Close)
+
+	for i := 0; i < 4; i++ {
+		ok := cc.Enqueue(Packet{Data: []byte{byte(i)}})
+		if !ok {
+			t.Fatalf("enqueue %d should succeed", i)
+		}
+	}
+	if got := cc.QueueDepth.Load(); got != 4 {
+		t.Fatalf("expected QueueDepth=4, got %d", got)
+	}
+	if got := cc.QueueMaxDepth.Load(); got != 4 {
+		t.Fatalf("expected QueueMaxDepth=4, got %d", got)
+	}
+	if got := cc.DropPackets.Load(); got != 0 {
+		t.Fatalf("expected DropPackets=0, got %d", got)
+	}
+}
+
+func TestClientConnEnqueueDropsWhenFull(t *testing.T) {
+	ip := netip.MustParseAddr("10.100.0.2")
+	cc := NewClientConn(nil, "dev1", ip, 2)
+	t.Cleanup(cc.Close)
+
+	for i := 0; i < 2; i++ {
+		if ok := cc.Enqueue(Packet{Data: []byte{byte(i)}}); !ok {
+			t.Fatalf("enqueue %d should succeed", i)
+		}
+	}
+	// Queue is now full. Conn is nil so writeLoop will exit on first write
+	// attempt, but before that we still expect a drop on the next Enqueue.
+	// However, writeLoop may already have drained the queue. To isolate the
+	// drop policy, we just check the upper bound on DropPackets.
+	for i := 0; i < 5; i++ {
+		cc.Enqueue(Packet{Data: []byte{0xff}})
+	}
+	if got := cc.DropPackets.Load(); got == 0 {
+		t.Fatalf("expected DropPackets > 0 when queue is overloaded, got 0")
+	}
+}
+
+func TestClientConnCloseStopsWriteLoop(t *testing.T) {
+	serverConn, clientConn := newTestWebSocketPair(t)
+	ip := netip.MustParseAddr("10.100.0.2")
+	cc := NewClientConn(serverConn, "dev1", ip, 4)
+
+	// Drive a few packets through the queue. writeLoop is the only goroutine
+	// that writes to serverConn, so the client-side reads back prove the
+	// writeLoop is actually running.
+	go func() {
+		for i := 0; i < 3; i++ {
+			_ = clientConn.Write(context.Background(), websocket.MessageBinary, []byte{byte(i)})
+		}
+	}()
+	for i := 0; i < 3; i++ {
+		if !cc.Enqueue(Packet{Data: []byte{byte(i)}}) {
+			t.Fatalf("enqueue %d should succeed", i)
+		}
+	}
+	// Wait for writeLoop to drain. The single-writer model guarantees the
+	// packet is on the wire before QueueDepth returns to 0.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if cc.QueueDepth.Load() == 0 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := cc.QueueDepth.Load(); got != 0 {
+		t.Fatalf("writeLoop did not drain queue, QueueDepth=%d", got)
+	}
+
+	cc.Close()
+	select {
+	case <-cc.writeLoopDone:
+		// writeLoop exited.
+	case <-time.After(2 * time.Second):
+		t.Fatal("writeLoop did not exit after Close")
+	}
+	// Enqueue after Close should drop the packet.
+	if cc.Enqueue(Packet{Data: []byte{0}}) {
+		t.Fatal("Enqueue after Close should be rejected")
+	}
+	if got := cc.DropPackets.Load(); got == 0 {
+		t.Fatal("expected DropPackets > 0 after Close")
+	}
+}
+
+func TestClientConnCloseIdempotent(t *testing.T) {
+	serverConn, _ := newTestWebSocketPair(t)
+	ip := netip.MustParseAddr("10.100.0.2")
+	cc := NewClientConn(serverConn, "dev1", ip, 1)
+
+	cc.Close()
+	cc.Close() // must not panic
+	select {
+	case <-cc.writeLoopDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("writeLoop did not exit")
+	}
+}
+
+// newTestWebSocketPair stands up a httptest server that accepts a single
+// WebSocket upgrade and returns both the server-side and client-side
+// *websocket.Conn. The test server and both conns are torn down via
+// t.Cleanup.
+func newTestWebSocketPair(t *testing.T) (serverConn, clientConn *websocket.Conn) {
+	t.Helper()
+	type acceptResult struct {
+		conn *websocket.Conn
+		err  error
+	}
+	resCh := make(chan acceptResult, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, &websocket.AcceptOptions{InsecureSkipVerify: true})
+		resCh <- acceptResult{conn: conn, err: err}
+	}))
+	t.Cleanup(srv.Close)
+
+	url := "ws" + srv.URL[len("http"):]
+	cli, _, err := websocket.Dial(context.Background(), url, nil)
+	if err != nil {
+		t.Fatalf("websocket.Dial: %v", err)
+	}
+	t.Cleanup(func() { cli.CloseNow() })
+
+	select {
+	case res := <-resCh:
+		if res.err != nil {
+			t.Fatalf("websocket.Accept: %v", res.err)
+		}
+		t.Cleanup(func() { res.conn.CloseNow() })
+		return res.conn, cli
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for server-side websocket")
+		return nil, nil
+	}
+}
+
+func TestClientConnStatsIncludeDrops(t *testing.T) {
+	r := NewRouter()
+	ip := netip.MustParseAddr("10.100.0.2")
+	cc := NewClientConn(nil, "dev1", ip, 1)
+	t.Cleanup(cc.Close)
+
+	r.Register(ip, cc)
+	got, ok := r.Lookup(ip)
+	if !ok {
+		t.Fatal("expected to find registered IP")
+	}
+	_ = got
+
+	// Force a drop.
+	cc.Enqueue(Packet{Data: []byte{1}})
+	// Drain may consume it; pile more to guarantee overflow.
+	for i := 0; i < 10; i++ {
+		cc.Enqueue(Packet{Data: []byte{2}})
+	}
+
+	stats := r.Stats()
+	if len(stats) != 1 {
+		t.Fatalf("expected 1 stat, got %d", len(stats))
+	}
+	if stats[0].DeviceID != "dev1" {
+		t.Fatalf("unexpected DeviceID: %s", stats[0].DeviceID)
+	}
+	if stats[0].DropPackets == 0 {
+		t.Fatal("expected DropPackets > 0 in stats")
 	}
 }
