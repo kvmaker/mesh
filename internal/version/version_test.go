@@ -2,6 +2,9 @@ package version
 
 import "testing"
 
+// TestGet 直接读写包级 Version 变量。Version 的设计本身就是构建期注入的
+// 全局变量（-ldflags -X），因此这里通过运行时改写它来模拟不同注入值；
+// 同一进程内 t.Run 顺序执行，无并发访问，无需 mutex。
 func TestGet(t *testing.T) {
 	cases := []struct {
 		name string
