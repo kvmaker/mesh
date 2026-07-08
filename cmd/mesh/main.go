@@ -10,15 +10,17 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/maxyu/mesh/internal/client"
+	"github.com/maxyu/mesh/internal/version"
 )
 
 func main() {
 	root := &cobra.Command{
-		Use:   "mesh",
-		Short: "Mesh VPN 客户端",
-		Long:  "Mesh VPN 客户端 — 加入、启动、查看状态或退出 mesh 网络。",
+		Use:     "mesh",
+		Short:   "Mesh VPN 客户端",
+		Long:    "Mesh VPN 客户端 — 加入、启动、查看状态或退出 mesh 网络。",
+		Version: version.Get(),
 	}
-	root.AddCommand(joinCmd(), upCmd(), statusCmd(), peersCmd(), leaveCmd())
+	root.AddCommand(joinCmd(), upCmd(), statusCmd(), peersCmd(), leaveCmd(), versionCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -83,6 +85,16 @@ func peersCmd() *cobra.Command {
 		Short: "查看网络中的所有设备",
 		RunE: func(c *cobra.Command, args []string) error {
 			return client.Peers()
+		},
+	}
+}
+
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "打印当前软件版本",
+		Run: func(c *cobra.Command, args []string) {
+			fmt.Println(version.Get())
 		},
 	}
 }

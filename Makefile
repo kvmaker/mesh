@@ -2,9 +2,13 @@
 
 INSTALL_DIR := /usr/local/bin
 
+# 版本注入：默认从 git tag 读，未打 tag 时使用 dev；可通过 VERSION= 覆盖
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+LDFLAGS := -X github.com/maxyu/mesh/internal/version.Version=$(VERSION)
+
 build:
-	go build -o bin/meshd ./cmd/meshd
-	go build -o bin/mesh ./cmd/mesh
+	go build -ldflags "$(LDFLAGS)" -o bin/meshd ./cmd/meshd
+	go build -ldflags "$(LDFLAGS)" -o bin/mesh ./cmd/mesh
 
 test:
 	go test ./...
@@ -13,18 +17,18 @@ clean:
 	rm -rf bin/
 
 build-linux:
-	GOOS=linux GOARCH=amd64 go build -o bin/meshd-linux-amd64 ./cmd/meshd
-	GOOS=linux GOARCH=amd64 go build -o bin/mesh-linux-amd64 ./cmd/mesh
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/meshd-linux-amd64 ./cmd/meshd
+	GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o bin/mesh-linux-amd64 ./cmd/mesh
 
 build-darwin:
-	GOOS=darwin GOARCH=arm64 go build -o bin/mesh-darwin-arm64 ./cmd/mesh
+	GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o bin/mesh-darwin-arm64 ./cmd/mesh
 
 build-all: build-darwin build-linux
 
 # macOS 本机安装：go install 直接输出到 GOPATH/bin 避免 xattr 问题，
 # 再 codesign ad-hoc 签名防止 Gatekeeper kill。
 install:
-	go build -o $(INSTALL_DIR)/mesh ./cmd/mesh
+	go build -ldflags "$(LDFLAGS)" -o $(INSTALL_DIR)/mesh ./cmd/mesh
 	codesign --sign - --force $(INSTALL_DIR)/mesh
 	@echo "已安装: $(INSTALL_DIR)/mesh"
 

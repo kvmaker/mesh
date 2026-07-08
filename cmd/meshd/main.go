@@ -24,14 +24,19 @@ import (
 	"github.com/maxyu/mesh/internal/device"
 	"github.com/maxyu/mesh/internal/token"
 	"github.com/maxyu/mesh/internal/tunnel"
+	"github.com/maxyu/mesh/internal/version"
 )
 
 var cfgPath string
 
 func main() {
-	root := &cobra.Command{Use: "meshd", Short: "Mesh VPN server"}
+	root := &cobra.Command{
+		Use:     "meshd",
+		Short:   "Mesh VPN server",
+		Version: version.Get(),
+	}
 	root.PersistentFlags().StringVar(&cfgPath, "config", "/etc/mesh/meshd.yaml", "config file")
-	root.AddCommand(initCmd(), runCmd(), tokenCmd(), deviceCmd())
+	root.AddCommand(initCmd(), runCmd(), tokenCmd(), deviceCmd(), versionCmd())
 	if err := root.Execute(); err != nil {
 		os.Exit(1)
 	}
@@ -231,4 +236,14 @@ func formatDuration(d time.Duration) string {
 	h := int(d.Hours())
 	m := int(d.Minutes()) % 60
 	return fmt.Sprintf("%dh%dm", h, m)
+}
+
+func versionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "打印当前软件版本",
+		Run: func(c *cobra.Command, args []string) {
+			fmt.Println(version.Get())
+		},
+	}
 }
