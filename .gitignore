@@ -1,1 +1,4 @@
 bin/
+
+# e2e 测试产物
+tests/e2e/results/

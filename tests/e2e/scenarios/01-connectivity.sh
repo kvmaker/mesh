@@ -67,7 +67,7 @@ assert "client-b reconnect: a->b works" \
 # fping -q -c 输出 "xmt/rcv/%loss = 20/20/0%, ..."，sed -E 提取 loss 数值。
 # dex 是函数在 bash -c 不可用 → 用 docker exec；grep -oP 在 BSD 不可用 → 用 sed -E。
 assert "fping burst low loss" \
-  bash -c "loss=\$(docker exec mesh-client-a fping -q -c 20 -p 100 $B_IP 2>&1 | sed -nE 's|.*= [0-9]+/[0-9]+/([0-9]+)%.*|\1|p' | head -1); [ -z \"\$loss\" ] && exit 0; [ \"\$loss\" -lt 5 ]"
+  bash -c "loss=\$(docker exec mesh-client-a fping -q -c 20 -p 100 $B_IP 2>&1 | sed -nE 's|.*= [0-9]+/[0-9]+/([0-9]+)%.*|\1|p' | head -1); [ -z \"\$loss\" ] && exit 1; [ \"\$loss\" -lt 5 ]"
 
 OK=$(wc -l <"$ASSERT_OK" | tr -d ' ')
 FAIL=$(wc -l <"$ASSERT_FAIL" | tr -d ' ')
