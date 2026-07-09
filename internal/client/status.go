@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/dustin/go-humanize"
-	"github.com/maxyu/mesh/internal/tunnel"
 )
 
 // Status 打印当前注册状态与隧道运行时统计信息。
@@ -57,13 +56,13 @@ func Status() error {
 	return nil
 }
 
-func loadTunnelStats() (*tunnel.ClientStats, error) {
+func loadTunnelStats() (*ClientStats, error) {
 	path := filepath.Join(ConfigDir(), "status.json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	var stats tunnel.ClientStats
+	var stats ClientStats
 	if err := json.Unmarshal(data, &stats); err != nil {
 		return nil, err
 	}

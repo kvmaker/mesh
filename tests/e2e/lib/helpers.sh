@@ -30,7 +30,9 @@ wait_for_server() {
   echo "waiting for server meshd..."
   local i
   for i in $(seq 1 60); do
-    if dex mesh-server curl -kfsS https://server:443/api/devices >/dev/null 2>&1; then
+    # 探活用无需鉴权的封面页 GET /（/api/devices 现在需要 Bearer 凭证，
+    # 未授权会 401 导致 curl -f 失败，不适合做健康检查）。
+    if dex mesh-server curl -kfsS https://server:443/ >/dev/null 2>&1; then
       return 0
     fi
     sleep 1

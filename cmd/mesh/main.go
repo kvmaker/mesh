@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/maxyu/mesh/internal/client"
-	"github.com/maxyu/mesh/internal/version"
+	"github.com/maxyu/mesh/internal/common/version"
 )
 
 func main() {

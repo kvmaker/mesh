@@ -1,6 +1,7 @@
 package client
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -55,4 +56,27 @@ func TestAcquireInstanceLockAt(t *testing.T) {
 		t.Fatalf("acquire with missing parent dir failed: %v", err)
 	}
 	t.Cleanup(func() { fourth.Close() })
+}
+
+// TestAcquireInstanceLockAtPermissionDenied 验证在不可写目录下抢锁时，
+// 返回的错误应提示用户使用 sudo，而不是原始的 "permission denied"。
+func TestAcquireInstanceLockAtPermissionDenied(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root; permission denied path is unreachable")
+	}
+	dir := t.TempDir()
+	// 去掉写/执行权限，使其下的 OpenFile 触发 EACCES。
+	if err := os.Chmod(dir, 0500); err != nil {
+		t.Fatalf("chmod failed: %v", err)
+	}
+	t.Cleanup(func() { os.Chmod(dir, 0700) }) // 恢复以便 TempDir 清理
+
+	f, err := acquireInstanceLockAt(filepath.Join(dir, "mesh.lock"))
+	if err == nil {
+		f.Close()
+		t.Fatal("acquire succeeded in unwritable dir; want permission error")
+	}
+	if !strings.Contains(err.Error(), "sudo") {
+		t.Errorf("error message should mention 'sudo', got: %v", err)
+	}
 }

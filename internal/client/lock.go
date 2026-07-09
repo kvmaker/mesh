@@ -27,13 +27,18 @@ func acquireInstanceLock() (*os.File, error) {
 }
 
 // acquireInstanceLockAt 是 acquireInstanceLock 的可注入路径版本，方便单测
-// 使用 t.TempDir() 而不需要污染 ~/.mesh。
+// 使用 t.TempDir() 而不需要写入 /var/run。
 func acquireInstanceLockAt(path string) (*os.File, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, fmt.Errorf("mkdir lock dir: %w", err)
 	}
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0600)
 	if err != nil {
+		// /var/run 仅 root 可写；普通用户在此处最先撞到权限错误（早于 TUN
+		// 创建），给出明确的 sudo 提示，避免用户困惑于 "permission denied"。
+		if os.IsPermission(err) {
+			return nil, fmt.Errorf("mesh up requires root; run with sudo (lock: %s)", path)
+		}
 		return nil, fmt.Errorf("open lock file: %w", err)
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {

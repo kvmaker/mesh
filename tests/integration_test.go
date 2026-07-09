@@ -9,11 +9,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/maxyu/mesh/internal/api"
-	"github.com/maxyu/mesh/internal/config"
-	"github.com/maxyu/mesh/internal/db"
-	"github.com/maxyu/mesh/internal/device"
-	"github.com/maxyu/mesh/internal/token"
+	"github.com/maxyu/mesh/internal/server/api"
+	"github.com/maxyu/mesh/internal/server/config"
+	"github.com/maxyu/mesh/internal/server/db"
+	"github.com/maxyu/mesh/internal/server/device"
+	"github.com/maxyu/mesh/internal/server/token"
 )
 
 func setup(t *testing.T) (*api.Server, string) {
@@ -76,7 +76,9 @@ func TestMultipleRegistrations(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("device %d: %d %s", i, w.Code, w.Body.String())
 		}
-		var resp struct{ AssignedIP string `json:"assigned_ip"` }
+		var resp struct {
+			AssignedIP string `json:"assigned_ip"`
+		}
 		json.Unmarshal(w.Body.Bytes(), &resp)
 		if resp.AssignedIP != exp {
 			t.Fatalf("device %d: expected %s, got %s", i, exp, resp.AssignedIP)

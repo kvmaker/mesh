@@ -4,15 +4,13 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
-
-	"github.com/maxyu/mesh/internal/tunnel"
 )
 
 // Up 读取本地配置，创建 TUN 设备并建立 WebSocket 隧道。
 // 该操作需要 root 权限（TUN 设备创建）。
 func Up(ctx context.Context) error {
-	// 单实例保护：先抢占 ~/.mesh/mesh.lock 排他锁；已有 mesh up 在跑时
-	// 立即返回错误退出，避免多份实例同时持有 TUN 设备和 WebSocket 连接。
+	// 单实例保护：抢占排他锁，已有 mesh up 在跑时立即返回错误退出，
+	// 避免多份实例同时持有 TUN 设备和 WebSocket 连接。
 	lock, err := acquireInstanceLock()
 	if err != nil {
 		return err
@@ -31,7 +29,7 @@ func Up(ctx context.Context) error {
 		tlsCfg = &tls.Config{InsecureSkipVerify: true}
 	}
 
-	tc, err := tunnel.NewTunnelClient(wsURL, cfg.DeviceSecret, cfg.DeviceIP, cfg.NetworkCIDR, 1300, ConfigDir(), tlsCfg)
+	tc, err := NewTunnelClient(wsURL, cfg.DeviceSecret, cfg.DeviceIP, cfg.NetworkCIDR, 1300, ConfigDir(), tlsCfg)
 	if err != nil {
 		return fmt.Errorf("setup tunnel: %w", err)
 	}

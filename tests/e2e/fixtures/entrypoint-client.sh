@@ -8,15 +8,17 @@
 set -euo pipefail
 
 # 等待 server 起来（自签证书，curl 必须 -k）
+# 探活用无需鉴权的封面页 GET /（/api/devices 现在需要 Bearer 凭证，
+# 未授权会 401 导致 curl -f 失败）。
 echo "waiting for server..."
 for i in $(seq 1 60); do
-  if curl -kfsS https://server:443/api/devices >/dev/null 2>&1; then
+  if curl -kfsS https://server:443/ >/dev/null 2>&1; then
     echo "server is up"
     break
   fi
   sleep 1
 done
-if ! curl -kfsS https://server:443/api/devices >/dev/null 2>&1; then
+if ! curl -kfsS https://server:443/ >/dev/null 2>&1; then
   echo "ERROR: server did not become ready within 60s" >&2
   exit 1
 fi

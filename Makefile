@@ -4,7 +4,7 @@ INSTALL_DIR := /usr/local/bin
 
 # 版本注入：默认从 git tag 读，未打 tag 时使用 dev；可通过 VERSION= 覆盖
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -X github.com/maxyu/mesh/internal/version.Version=$(VERSION)
+LDFLAGS := -X github.com/maxyu/mesh/internal/common/version.Version=$(VERSION)
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o bin/meshd ./cmd/meshd

@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"text/tabwriter"
 	"os"
+	"text/tabwriter"
 	"time"
 )
 
@@ -33,7 +33,13 @@ func Peers() error {
 		Timeout:   5 * time.Second,
 		Transport: &http.Transport{TLSClientConfig: tlsCfg},
 	}
-	resp, err := client.Get(fmt.Sprintf("https://%s/api/devices", cfg.ServerDomain))
+	req, err := http.NewRequest("GET", fmt.Sprintf("https://%s/api/devices", cfg.ServerDomain), nil)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	// /api/devices 需要鉴权，用本设备密钥作为 Bearer 凭证。
+	req.Header.Set("Authorization", "Bearer "+cfg.DeviceSecret)
+	resp, err := client.Do(req)
 	if err != nil {
 		return fmt.Errorf("cannot reach server: %w", err)
 	}
