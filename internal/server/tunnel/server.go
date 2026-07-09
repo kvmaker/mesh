@@ -8,7 +8,9 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/coder/websocket"
@@ -16,6 +18,21 @@ import (
 	"github.com/maxyu/mesh/internal/server/config"
 	"github.com/maxyu/mesh/internal/server/device"
 )
+
+// debugPacket 控制是否在转发热路径逐包打印 route-miss / parse-error 日志。
+// 由环境变量 MESH_DEBUG_PACKET 控制，默认关闭：VPN 高包量下逐包日志会带来
+// 格式化 / 锁 / journald I/O 开销与延迟抖动。关闭时热路径只累加原子计数器，
+// 由 statsLoop 周期性聚合输出。排障时临时 export MESH_DEBUG_PACKET=1 即可。
+var debugPacket = func() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("MESH_DEBUG_PACKET"))) {
+	case "1", "true", "on", "yes":
+		return true
+	}
+	return false
+}()
+
+// statsInterval 是聚合统计日志的输出周期。
+const statsInterval = 30 * time.Second
 
 // TunnelServer manages TUN device and WebSocket connections for the mesh VPN.
 type TunnelServer struct {
@@ -25,6 +42,11 @@ type TunnelServer struct {
 	tunName string
 	router  *Router
 	tunIP   netip.Addr
+
+	// 热路径计数器：替代逐包日志。routeMiss 统计找不到路由的包，
+	// parseErr 统计无法解析目的 IP 的畸形包。由 statsLoop 周期性聚合输出。
+	routeMiss atomic.Uint64
+	parseErr  atomic.Uint64
 }
 
 // serverIP derives the server's VPN IP from the network CIDR (first usable host).
@@ -65,9 +87,36 @@ func NewTunnelServer(db *sql.DB, cfg *config.Config) (*TunnelServer, error) {
 	}, nil
 }
 
-// Start launches the TUN read loop in a goroutine.
+// Start launches the TUN read loop and the periodic stats aggregation loop.
 func (ts *TunnelServer) Start(ctx context.Context) {
 	go ts.readTUN(ctx)
+	go ts.statsLoop(ctx)
+}
+
+// statsLoop periodically emits an aggregated line for hot-path drop counters
+// (route misses and parse errors) instead of logging them per packet. It only
+// prints when there is new activity since the last tick, so an idle server
+// stays quiet. Exits when ctx is cancelled.
+func (ts *TunnelServer) statsLoop(ctx context.Context) {
+	ticker := time.NewTicker(statsInterval)
+	defer ticker.Stop()
+
+	var lastMiss, lastParse uint64
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			miss := ts.routeMiss.Load()
+			parse := ts.parseErr.Load()
+			if miss == lastMiss && parse == lastParse {
+				continue
+			}
+			log.Printf("[stats] route_miss=%d (+%d) parse_err=%d (+%d)",
+				miss, miss-lastMiss, parse, parse-lastParse)
+			lastMiss, lastParse = miss, parse
+		}
+	}
 }
 
 // readTUN reads packets from the TUN device and routes them to the appropriate WebSocket client.
@@ -106,10 +155,18 @@ func (ts *TunnelServer) readTUN(ctx context.Context) {
 func (ts *TunnelServer) routePacket(pkt []byte) {
 	dst, err := ExtractDstIP(pkt)
 	if err != nil {
+		ts.parseErr.Add(1)
+		if debugPacket {
+			log.Printf("packet parse error: %v (len=%d)", err, len(pkt))
+		}
 		return
 	}
 	cc, ok := ts.router.Lookup(dst)
 	if !ok {
+		ts.routeMiss.Add(1)
+		if debugPacket {
+			log.Printf("no route for %s", dst)
+		}
 		return
 	}
 	// Hand off to the per-connection single writer. RecordTx is performed
@@ -187,7 +244,10 @@ func (ts *TunnelServer) clientReadLoop(ctx context.Context, cc *ClientConn) {
 
 		dst, err := ExtractDstIP(pkt)
 		if err != nil {
-			log.Printf("packet parse error: %v (len=%d)", err, len(pkt))
+			ts.parseErr.Add(1)
+			if debugPacket {
+				log.Printf("packet parse error: %v (len=%d)", err, len(pkt))
+			}
 			continue
 		}
 
@@ -203,7 +263,10 @@ func (ts *TunnelServer) clientReadLoop(ctx context.Context, cc *ClientConn) {
 			// performed inside writeLoop after the frame is actually sent.
 			dest.Enqueue(Packet{Data: pkt})
 		} else {
-			log.Printf("no route for %s", dst)
+			ts.routeMiss.Add(1)
+			if debugPacket {
+				log.Printf("no route for %s", dst)
+			}
 		}
 	}
 }

@@ -1,6 +1,6 @@
 # Mesh TODO 索引
 
-> Last updated: 2026-07-07
+> Last updated: 2026-07-09
 
 ## 类别
 
@@ -28,7 +28,7 @@
 
 | 类别 | 已完成 | 总数 | 完成率 |
 |------|--------|------|--------|
-| performance | 1 | 10 | 10% |
+| performance | 2 | 10 | 20% |
 | architecture | 0 | 12 | 0% |
 | bug | 2 | 2 | 100% |
 

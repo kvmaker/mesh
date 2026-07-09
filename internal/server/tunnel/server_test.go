@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"net/netip"
+	"os"
 	"testing"
 )
 
@@ -64,12 +65,36 @@ func TestRoutePacketNoRoute(t *testing.T) {
 	ts := &TunnelServer{router: NewRouter()}
 	// No panic and nothing enqueued for an unknown destination.
 	ts.routePacket(makeIPv4Packet(netip.MustParseAddr("10.100.0.99")))
+	if got := ts.routeMiss.Load(); got != 1 {
+		t.Fatalf("expected routeMiss=1 after unknown destination, got %d", got)
+	}
+	if got := ts.parseErr.Load(); got != 0 {
+		t.Fatalf("expected parseErr=0, got %d", got)
+	}
 }
 
 func TestRoutePacketMalformed(t *testing.T) {
 	ts := &TunnelServer{router: NewRouter()}
 	// Too-short packet: ExtractDstIP errors, routePacket returns silently.
 	ts.routePacket([]byte{0x45, 0x00})
+	if got := ts.parseErr.Load(); got != 1 {
+		t.Fatalf("expected parseErr=1 after malformed packet, got %d", got)
+	}
+	if got := ts.routeMiss.Load(); got != 0 {
+		t.Fatalf("expected routeMiss=0, got %d", got)
+	}
+}
+
+// TestDebugPacketDefaultOff guards the hot-path invariant that per-packet
+// logging is disabled unless MESH_DEBUG_PACKET is explicitly set. If this
+// flips to true by default it would reintroduce the P00 logging overhead.
+func TestDebugPacketDefaultOff(t *testing.T) {
+	if _, set := os.LookupEnv("MESH_DEBUG_PACKET"); set {
+		t.Skip("MESH_DEBUG_PACKET is set in the environment")
+	}
+	if debugPacket {
+		t.Fatal("debugPacket should default to false when MESH_DEBUG_PACKET is unset")
+	}
 }
 
 func TestTunnelServerStats(t *testing.T) {
