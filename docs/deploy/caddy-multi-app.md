@@ -28,7 +28,7 @@ curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh \
 
 ### 2. meshd 监听本地端口
 
-`install.sh --mode relay` 生成的 yaml 已含 `mode: relay` 与 `tls_mode: none`。编辑 `/etc/mesh/meshd.yaml`,把 `listen_addr` 改为本地端口(让 Caddy 反代):
+`install.sh --mode relay` 生成的 `/etc/mesh/meshd.yaml` 默认已是本地监听,无需手动修改:
 
 ```yaml
 mode: relay
@@ -36,9 +36,9 @@ tls_mode: none
 listen_addr: "127.0.0.1:8443"
 ```
 
-> relay 模式下 install.sh 默认写入 `tls_mode: none`,meshd 走纯 HTTP,由 Caddy 统一终止 TLS 并签发证书。meshd 不启动 autocert、不监听 :80。
+> relay 模式下 install.sh 默认写入 `tls_mode: none` 与 `listen_addr: "127.0.0.1:8443"`,meshd 走纯 HTTP 并绑本地端口,由 Caddy 统一终止 TLS 并签发证书。meshd 不启动 autocert、不监听 :80,也不再需要 `CAP_NET_BIND_SERVICE`。
 
-meshd 现在是纯 HTTP 服务,Caddy 明文反代即可,无 TLS 握手问题。
+若想换一个本地端口,改 `listen_addr` 即可,记得 Caddyfile 里的 `reverse_proxy` 目标保持一致。meshd 是纯 HTTP 服务,Caddy 明文反代,无 TLS 握手问题。
 
 ### 3. 安装 Caddy
 

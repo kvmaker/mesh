@@ -147,15 +147,17 @@ install_server() {
     chmod 700 /etc/mesh /etc/mesh/certs
 
     local tls_mode_line=""
+    local listen_addr_line="listen_addr: \":443\""
     if [ "$mode" = "relay" ]; then
         tls_mode_line="tls_mode: \"none\""
+        listen_addr_line="listen_addr: \"127.0.0.1:8443\""
     fi
     if [ ! -f /etc/mesh/meshd.yaml ]; then
         cat > /etc/mesh/meshd.yaml << EOF
 domain: "${domain}"
 mode: "${mode}"
 ${tls_mode_line}
-listen_addr: ":443"
+${listen_addr_line}
 network: "10.100.0.0/24"
 data_dir: "/etc/mesh"
 cert_dir: "/etc/mesh/certs"

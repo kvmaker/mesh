@@ -102,7 +102,8 @@ func (s *Server) serveMode() string {
 	return "autocert"
 }
 
-// ListenAndServeTLS starts the HTTPS server.
+// ListenAndServeTLS starts the API server: HTTPS via autocert or a self-signed
+// cert, or plain HTTP when tls_mode=none (relay mode behind a reverse proxy).
 //
 // 生产环境使用 autocert（Let's Encrypt）+ :80 ACME challenge listener。
 // 当 cfg.TLSTestMode 为真（即 e2e 测试设置了 MESH_TEST_TLS=on）时，
