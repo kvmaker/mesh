@@ -122,3 +122,16 @@ relay 模式下三条路径:
 
 - relay 模式的 Docker 镜像化(去 CAP_NET_ADMIN 后更易打包)——后续独立工作。
 - 若未来 relay 模式需要 server 主动探活客户端,再评估轻量方案(当前 YAGNI)。
+
+## 11. 范围扩展(2026-07-20 实施评审后发现并经用户批准)
+
+原 spec 范围仅含"去 TUN"。实施评审(I-1)发现:relay 模式未解决 meshd 独占 `:443`/`:80` + 自带 TLS(autocert)的问题,导致文档描述的"Caddy 反代 meshd 到本地端口"架构跑不通(autocert 无法完成 ACME + Caddy 明文反代与 meshd TLS 握手失败)。另发现 M1:install.sh relay 仅去掉 `AmbientCapabilities`(未授),root 启动仍继承 CAP_NET_ADMIN。经用户批准扩展范围:
+
+- **新增 `tls_mode: autocert | none` 配置**(默认 `autocert`,向后兼容)。
+- `tls_mode: none` 时 meshd 走纯 HTTP(`http.Server.ListenAndServe`),不启动 autocert、不监听 `:80`,适用于 relay 模式配合反向代理(Caddy)。
+- **install.sh relay 模式默认落 `tls_mode: none`**,systemd unit 加 `CapabilityBoundingSet=!CAP_NET_ADMIN CAP_NET_RAW` 显式 deny(修正 M1),并去掉 `CAP_NET_BIND_SERVICE`(relay 绑本地高位端口)。
+- 文档(`caddy-multi-app.md`)更新为真实的 plain HTTP 架构,消除 I-1 矛盾。
+
+**不变项(仍不动):** 客户端协议、`device.Allocate`、`meshd init`、full 模式行为。
+
+`TLSTestMode`(env `MESH_TEST_TLS`,e2e 自签)优先级高于 `tls_mode`:测试模式仍走自签,不受 yaml `tls_mode` 影响。

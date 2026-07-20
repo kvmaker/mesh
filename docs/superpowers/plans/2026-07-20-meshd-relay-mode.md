@@ -674,3 +674,359 @@ git commit -m "docs(deploy): 新增 Caddy 多应用部署文档(relay 模式)"
 
 - 跑全量测试:`go test ./...`
 - 按 CLAUDE.md 流程,合并回 master 前用 coderabbit 做完整 codereview。
+
+---
+
+# 范围扩展:tls_mode: none(2026-07-20 实施评审后批准)
+
+> 原 Task 1-4 完成 relay 模式(去 TUN)基础。评审发现 relay 未解决 meshd 独占 443/80 + 自带 TLS(I-1),且 install.sh 去 CAP 不彻底(M1)。以下 Task 5-7 扩展范围,让 relay + Caddy 反代真正可用。
+
+## Task 5: config 加 TLSMode 字段
+
+**Files:**
+- Modify: `internal/server/config/config.go`
+- Test: `internal/server/config/config_test.go`
+
+**Interfaces:**
+- Produces: `config.TLSAutocert == "autocert"`、`config.TLSNone == "none"` 常量;`Config.TLSMode string` 字段;`(*Config).normalizeTLSMode()`。Task 6 的 `serveMode` 依赖 `cfg.TLSMode == config.TLSNone`。
+
+- [ ] **Step 1: 写失败测试**
+
+在 `internal/server/config/config_test.go` 末尾追加:
+
+```go
+func TestTLSModeDefault(t *testing.T) {
+	if Default().TLSMode != TLSAutocert {
+		t.Fatalf("expected default TLSMode=%q, got %q", TLSAutocert, Default().TLSMode)
+	}
+}
+
+func TestTLSModeLoadValues(t *testing.T) {
+	cases := []struct {
+		yaml string
+		want string
+	}{
+		{"tls_mode: autocert\n", TLSAutocert},
+		{"tls_mode: none\n", TLSNone},
+		{"tls_mode: NONE\n", TLSNone},
+		{"tls_mode:  none \n", TLSNone},
+		{"domain: x.com\n", TLSAutocert}, // 未指定 → 默认
+		{"tls_mode: foo\n", TLSAutocert}, // 非法 → 回退
+	}
+	for _, tc := range cases {
+		t.Run(tc.yaml, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "cfg.yaml")
+			os.WriteFile(p, []byte(tc.yaml), 0644)
+			cfg, err := Load(p)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.TLSMode != tc.want {
+				t.Fatalf("yaml=%q: expected TLSMode=%q, got %q", tc.yaml, tc.want, cfg.TLSMode)
+			}
+		})
+	}
+}
+```
+
+- [ ] **Step 2: 跑测试确认失败**
+
+Run: `go test ./internal/server/config/ -run TestTLSMode -v`
+Expected: 编译失败,`undefined: TLSAutocert`。
+
+- [ ] **Step 3: 实现 config.go**
+
+(3a) 把现有常量块扩为:
+
+```go
+const (
+	ModeFull    = "full"
+	ModeRelay   = "relay"
+	TLSAutocert = "autocert"
+	TLSNone     = "none"
+)
+```
+
+(3b) 在 `Config` 结构体 `Mode` 字段后加:
+
+```go
+	TLSMode string `yaml:"tls_mode"`
+```
+
+(3c) 在 `Default()` 字面量 `Mode: ModeFull,` 后加:
+
+```go
+		TLSMode:  TLSAutocert,
+```
+
+(3d) 在 `Load` 中 `cfg.normalizeMode()` 后加一行 `cfg.normalizeTLSMode()`,并新增方法:
+
+```go
+// normalizeTLSMode 把 TLSMode 归一化。空或非法值回退 autocert 并打印告警。
+// TLSTestMode(env)优先级更高,此处只处理 yaml 的 tls_mode。
+func (c *Config) normalizeTLSMode() {
+	switch strings.ToLower(strings.TrimSpace(c.TLSMode)) {
+	case "", TLSAutocert:
+		c.TLSMode = TLSAutocert
+	case TLSNone:
+		c.TLSMode = TLSNone
+	default:
+		fmt.Fprintf(os.Stderr, "warning: unknown tls_mode %q, falling back to %q\n", c.TLSMode, TLSAutocert)
+		c.TLSMode = TLSAutocert
+	}
+}
+```
+
+- [ ] **Step 4: 跑测试确认通过**
+
+Run: `go test ./internal/server/config/ -v`
+Expected: 全部 PASS。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add internal/server/config/config.go internal/server/config/config_test.go
+git commit -m "feat(config): 新增 tls_mode 配置项支持 autocert/none"
+```
+
+---
+
+## Task 6: api/server.go 支持 tls_mode: none
+
+**Files:**
+- Modify: `internal/server/api/server.go`(提取 `serveMode` + 改 `ListenAndServeTLS`)
+- Test: `internal/server/api/api_test.go`
+
+**Interfaces:**
+- Consumes: `config.TLSNone` / `config.TLSAutocert`(Task 5)、`config.Config.TLSTestMode`(既有)。
+- Produces: `(*Server).serveMode() string` 返回 `"selfsigned" | "plain" | "autocert"`;`ListenAndServeTLS` 在 `"plain"` 时走 `srv.ListenAndServe()`(纯 HTTP,不启动 autocert、不监听 :80)。
+
+- [ ] **Step 1: 写失败测试**
+
+在 `internal/server/api/api_test.go` 末尾追加:
+
+```go
+func TestServeMode(t *testing.T) {
+	cases := []struct {
+		name     string
+		testMode bool
+		tlsMode  string
+		want     string
+	}{
+		{"autocert_default", false, config.TLSAutocert, "autocert"},
+		{"plain_none", false, config.TLSNone, "plain"},
+		{"selfsigned_testmode", true, config.TLSAutocert, "selfsigned"},
+		{"testmode_overrides_none", true, config.TLSNone, "selfsigned"}, // TLSTestMode 优先
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{cfg: &config.Config{TLSMode: tc.tlsMode, TLSTestMode: tc.testMode}}
+			if got := s.serveMode(); got != tc.want {
+				t.Fatalf("serveMode(): expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}
+```
+
+- [ ] **Step 2: 跑测试确认失败**
+
+Run: `go test ./internal/server/api/ -run TestServeMode -v`
+Expected: 编译失败,`undefined: s.serveMode`。
+
+- [ ] **Step 3: 提取 `serveMode` 并改写 `ListenAndServeTLS`**
+
+在 `internal/server/api/server.go` 中,新增 `serveMode` 方法(放在 `ListenAndServeTLS` 前):
+
+```go
+// serveMode 决定 HTTPS 服务如何启动:
+//   - "selfsigned": TLSTestMode(e2e 测试,内存自签证书)
+//   - "plain":      tls_mode: none(relay + 反向代理,纯 HTTP,不启动 autocert)
+//   - "autocert":   默认(Let's Encrypt + :80 ACME challenge)
+//
+// TLSTestMode(env MESH_TEST_TLS)优先级高于 yaml tls_mode:测试模式恒走自签。
+func (s *Server) serveMode() string {
+	if s.cfg.TLSTestMode {
+		return "selfsigned"
+	}
+	if s.cfg.TLSMode == config.TLSNone {
+		return "plain"
+	}
+	return "autocert"
+}
+```
+
+把现有 `ListenAndServeTLS` 整体替换为(用 `serveMode` 分发,新增 `"plain"` 分支):
+
+```go
+func (s *Server) ListenAndServeTLS(ctx context.Context) error {
+	srv := &http.Server{
+		Addr:                s.cfg.ListenAddr,
+		Handler:             s.Handler(),
+		ReadHeaderTimeout:   10 * time.Second,
+	}
+	go func() {
+		<-ctx.Done()
+		srv.Close() //nolint:errcheck
+	}()
+
+	switch s.serveMode() {
+	case "selfsigned":
+		tlsCfg, err := s.selfSignedTLSConfig()
+		if err != nil {
+			return fmt.Errorf("self-signed cert: %w", err)
+		}
+		srv.TLSConfig = tlsCfg
+		return srv.ListenAndServeTLS("", "")
+	case "plain":
+		// tls_mode: none — 纯 HTTP,适用于 relay 模式配合反向代理(Caddy)。
+		// 不启动 autocert,不监听 :80。
+		return srv.ListenAndServe()
+	default: // "autocert"
+		m := &autocert.Manager{
+			Cache:      autocert.DirCache(s.cfg.CertDir),
+			Prompt:     autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(s.cfg.Domain),
+		}
+		srv.TLSConfig = &tls.Config{
+			GetCertificate: m.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
+		}
+		go func() {
+			if err := http.ListenAndServe(":80", m.HTTPHandler(nil)); err != nil {
+				log.Printf("ACME HTTP-01 listener on :80 failed: %v", err)
+			}
+		}()
+		return srv.ListenAndServeTLS("", "")
+	}
+}
+```
+
+- [ ] **Step 4: 跑测试确认通过**
+
+Run: `go test ./internal/server/api/ -v`
+Expected: 全部 PASS(含新增 `TestServeMode` 与既有用例)。
+
+- [ ] **Step 5: 跑全量测试确认无回归**
+
+Run: `go test ./...`
+Expected: 全部 PASS。
+
+- [ ] **Step 6: 提交**
+
+```bash
+git add internal/server/api/server.go internal/server/api/api_test.go
+git commit -m "feat(api): 支持 tls_mode none,纯 HTTP 模式供 relay 反代使用"
+```
+
+---
+
+## Task 7: install.sh + 文档收尾(修 I-1 与 M1)
+
+**Files:**
+- Modify: `install.sh`(relay 模式落 `tls_mode: none` + unit `CapabilityBoundingSet` deny)
+- Modify: `docs/deploy/caddy-multi-app.md`(消除 I-1 矛盾,真实 plain HTTP 架构)
+
+**Interfaces:**
+- Consumes: Task 5/6 的 `tls_mode: none` + `serveMode`。
+
+- [ ] **Step 1: install.sh — relay 模式 yaml 落 `tls_mode: none`**
+
+在 `install.sh` 的 `install_server()` 中,把写 yaml 的 heredoc 改为(full 模式不写 tls_mode 走默认 autocert;relay 模式落 none):
+
+```bash
+    local tls_mode_line=""
+    if [ "$mode" = "relay" ]; then
+        tls_mode_line="tls_mode: \"none\""
+    fi
+    if [ ! -f /etc/mesh/meshd.yaml ]; then
+        cat > /etc/mesh/meshd.yaml << EOF
+domain: "${domain}"
+mode: "${mode}"
+${tls_mode_line}
+listen_addr: ":443"
+network: "10.100.0.0/24"
+data_dir: "/etc/mesh"
+cert_dir: "/etc/mesh/certs"
+tun_name: "mesh0"
+tun_mtu: 1300
+EOF
+    fi
+```
+
+> 注:full 模式 `${tls_mode_line}` 为空,yaml 该行为空行(yaml 合法);relay 模式展开为 `tls_mode: "none"`。
+
+- [ ] **Step 2: install.sh — relay unit 加 CapabilityBoundingSet deny(修 M1)**
+
+把 systemd unit 的 `caps_line` 逻辑改为(full 保留 AmbientCapabilities;relay 改为 CapabilityBoundingSet 显式 deny + 去掉 CAP_NET_BIND_SERVICE):
+
+```bash
+    local caps_line="AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE"
+    if [ "$mode" = "relay" ]; then
+        # relay 模式:不创建 TUN、纯 HTTP 绑本地端口。
+        # CapabilityBoundingSet 显式 deny,确保即便以 root 启动也不具备
+        # CAP_NET_ADMIN/CAP_NET_RAW(防被攻破后创建 TUN/抓包)。
+        caps_line="CapabilityBoundingSet=!CAP_NET_ADMIN CAP_NET_RAW"
+    fi
+```
+
+(`Description=Mesh VPN Server (mode=${mode})` 与 heredoc 其余部分不变。)
+
+- [ ] **Step 3: install.sh 语法检查**
+
+Run: `bash -n install.sh && echo OK`
+Expected: `OK`。
+
+- [ ] **Step 4: 文档 — 消除 I-1 矛盾,改为真实 plain HTTP 架构**
+
+编辑 `docs/deploy/caddy-multi-app.md`:
+
+(4a) 把"## 前提:meshd relay 模式"段中的限制说明保留,但把那条矛盾的引用块:
+
+```
+> relay 模式下 meshd 仍自带 TLS(autocert)。若希望 TLS 完全交由 Caddy 管理,后续可加 `tls_mode: none` 配置(当前未实现,Caddy 可改用 SNI 四层透传,此处从略)。
+```
+
+替换为:
+
+```
+> relay 模式下 install.sh 默认写入 `tls_mode: none`,meshd 走纯 HTTP,由 Caddy 统一终止 TLS 并签发证书。meshd 不启动 autocert、不监听 :80。
+```
+
+(4b) 把"### 2. meshd 监听本地端口"段中的 yaml 示例与说明:
+
+```
+编辑 `/etc/mesh/meshd.yaml`,把 `listen_addr` 改为本地端口(让 Caddy 反代):
+
+```yaml
+mode: relay
+listen_addr: "127.0.0.1:8443"
+```
+
+> relay 模式下 meshd 仍自带 TLS(autocert)...
+```
+
+替换为:
+
+```
+`install.sh --mode relay` 生成的 yaml 已含 `mode: relay` 与 `tls_mode: none`。编辑 `/etc/mesh/meshd.yaml`,把 `listen_addr` 改为本地端口(让 Caddy 反代):
+
+```yaml
+mode: relay
+tls_mode: none
+listen_addr: "127.0.0.1:8443"
+```
+
+meshd 现在是纯 HTTP 服务,Caddy 明文反代即可,无 TLS 握手问题。
+```
+
+(4c) 在"### 1. 安装 meshd(relay 模式)"的命令块后,补一句说明 install.sh 已自动落 tls_mode: none 与去 CAP 的 unit。
+
+(4d) 在"## 限制"节,保留现有三条 bullet(含 mode 切换提示)。
+
+- [ ] **Step 5: 提交**
+
+```bash
+git add install.sh docs/deploy/caddy-multi-app.md
+git commit -m "feat(install,docs): relay 模式联动 tls_mode none 与 CapabilityBoundingSet,修正 Caddy 反代架构"
+```
