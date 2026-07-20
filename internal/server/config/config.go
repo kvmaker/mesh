@@ -8,6 +8,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+// Mode 取值。full = 创建 TUN、分配 server IP(server 作为 VPN 节点);
+// relay = 纯中继,不创建 TUN、不分配 server IP,仅做客户端间转发。
+const (
+	ModeFull  = "full"
+	ModeRelay = "relay"
+)
+
 type Config struct {
 	Domain     string `yaml:"domain"`
 	ListenAddr string `yaml:"listen_addr"`
@@ -16,6 +23,7 @@ type Config struct {
 	CertDir    string `yaml:"cert_dir"`
 	TunName    string `yaml:"tun_name"`
 	TunMTU     int    `yaml:"tun_mtu"`
+	Mode       string `yaml:"mode"`
 
 	// TLSTestMode 在 e2e 测试场景启用自签证书，由 MESH_TEST_TLS 环境变量控制。
 	// yaml tag "-" 表示该字段不入配置文件，仅供测试开关使用。
@@ -41,6 +49,7 @@ func Default() *Config {
 		CertDir:    "/etc/mesh/certs",
 		TunName:    "mesh0",
 		TunMTU:     1300,
+		Mode:       ModeFull,
 	}
 	// 在这里调用，确保所有获取 Config 的路径（Default 直用、Load 成功、Load 失败回退）
 	// 都能读取 MESH_TEST_TLS 环境变量，e2e 测试模式下不会误走 Let's Encrypt。
@@ -57,5 +66,20 @@ func Load(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, cfg); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	cfg.normalizeMode()
 	return cfg, nil
+}
+
+// normalizeMode 把 Mode 归一化为合法值。空或非法值回退 full 并打印告警,
+// 避免配置笔误让进程进入未定义状态。warning 风格仿 server.loadCfg。
+func (c *Config) normalizeMode() {
+	switch strings.ToLower(strings.TrimSpace(c.Mode)) {
+	case "", ModeFull:
+		c.Mode = ModeFull
+	case ModeRelay:
+		c.Mode = ModeRelay
+	default:
+		fmt.Fprintf(os.Stderr, "warning: unknown mode %q, falling back to %q\n", c.Mode, ModeFull)
+		c.Mode = ModeFull
+	}
 }

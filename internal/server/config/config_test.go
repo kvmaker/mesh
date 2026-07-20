@@ -94,3 +94,38 @@ func TestLoadTLSTestModeFromEnv(t *testing.T) {
 		})
 	}
 }
+
+func TestModeDefault(t *testing.T) {
+	cfg := Default()
+	if cfg.Mode != ModeFull {
+		t.Fatalf("expected default Mode=%q, got %q", ModeFull, cfg.Mode)
+	}
+}
+
+func TestModeLoadValues(t *testing.T) {
+	cases := []struct {
+		yaml string
+		want string
+	}{
+		{"mode: full\n", ModeFull},
+		{"mode: relay\n", ModeRelay},
+		{"mode: RELAY\n", ModeRelay},   // 大小写不敏感
+		{"mode:  relay \n", ModeRelay}, // 容忍空白
+		{"domain: x.com\n", ModeFull},  // 未指定 → 默认 full
+		{"mode: foo\n", ModeFull},      // 非法 → 回退 full
+		{"mode: \n", ModeFull},         // 空值 → full
+	}
+	for _, tc := range cases {
+		t.Run(tc.yaml, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "cfg.yaml")
+			os.WriteFile(p, []byte(tc.yaml), 0644)
+			cfg, err := Load(p)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.Mode != tc.want {
+				t.Fatalf("yaml=%q: expected Mode=%q, got %q", tc.yaml, tc.want, cfg.Mode)
+			}
+		})
+	}
+}
