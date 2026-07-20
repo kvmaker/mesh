@@ -1,9 +1,14 @@
 package tunnel
 
 import (
+	"database/sql"
 	"net/netip"
 	"os"
+	"path/filepath"
 	"testing"
+
+	"github.com/maxyu/mesh/internal/server/config"
+	"github.com/maxyu/mesh/internal/server/db"
 )
 
 func TestServerIP(t *testing.T) {
@@ -111,5 +116,73 @@ func TestTunnelServerStats(t *testing.T) {
 	}
 	if stats[0].DeviceID != "dev1" {
 		t.Fatalf("expected DeviceID=dev1, got %s", stats[0].DeviceID)
+	}
+}
+
+// setupTestDB 建一个已 migrate 的临时 sqlite,供需要 *sql.DB 的测试使用。
+func setupTestDB(t *testing.T) *sql.DB {
+	t.Helper()
+	d, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("db.Open: %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+	if err := db.Migrate(d); err != nil {
+		t.Fatalf("db.Migrate: %v", err)
+	}
+	return d
+}
+
+// TestNewTunnelServerRelayNoTUN 验证 relay 模式不创建 TUN、不分配 tunName。
+// CI 可跑:relay 路径不触碰 /dev/net/tun。
+func TestNewTunnelServerRelayNoTUN(t *testing.T) {
+	d := setupTestDB(t)
+	cfg := config.Default()
+	cfg.Mode = config.ModeRelay
+
+	ts, err := NewTunnelServer(d, cfg)
+	if err != nil {
+		t.Fatalf("NewTunnelServer relay: %v", err)
+	}
+	defer ts.Close()
+
+	if ts.tun != nil {
+		t.Fatalf("relay mode must not create TUN, got non-nil tun")
+	}
+	if ts.tunName != "" {
+		t.Fatalf("relay mode tunName must be empty, got %q", ts.tunName)
+	}
+}
+
+// TestCloseRelayNilTUN 验证 relay 模式(ts.tun==nil)下 Close 不 panic。
+func TestCloseRelayNilTUN(t *testing.T) {
+	ts := &TunnelServer{router: NewRouter()} // tun==nil
+	if err := ts.Close(); err != nil {
+		t.Fatalf("Close on nil tun should be no-op, got %v", err)
+	}
+}
+
+// TestRouteClientPacketRelayDropsServerBound 验证 relay 模式(tun==nil)下,
+// 发给传统 server IP(10.100.0.1)的包被丢弃并计入 routeMiss。
+func TestRouteClientPacketRelayDropsServerBound(t *testing.T) {
+	ts := &TunnelServer{router: NewRouter()} // tun==nil ⇒ relay 语义
+	ts.routeClientPacket(makeIPv4Packet(netip.MustParseAddr("10.100.0.1")))
+	if got := ts.routeMiss.Load(); got != 1 {
+		t.Fatalf("relay: expected routeMiss=1 for server-bound packet, got %d", got)
+	}
+}
+
+// TestRouteClientPacketRelayForwardsToClient 验证 relay 模式下,
+// 客户端间转发不受影响(对称于 TestRoutePacket)。
+func TestRouteClientPacketRelayForwardsToClient(t *testing.T) {
+	ts := &TunnelServer{router: NewRouter()} // tun==nil ⇒ relay 语义
+	dstIP := netip.MustParseAddr("10.100.0.5")
+	cc := NewClientConn(nil, "dev1", dstIP, 4)
+	t.Cleanup(cc.Close)
+	ts.router.Register(dstIP, cc)
+
+	ts.routeClientPacket(makeIPv4Packet(dstIP))
+	if got := cc.QueueDepth.Load(); got != 1 {
+		t.Fatalf("relay: expected packet forwarded to client, QueueDepth=%d", got)
 	}
 }

@@ -63,8 +63,22 @@ func serverIP(network string) (string, error) {
 	return v4.String(), nil
 }
 
-// NewTunnelServer creates a TunnelServer, initializes the TUN device, and configures the network interface.
+// NewTunnelServer creates a TunnelServer. In full mode it initializes the TUN
+// device and configures the network interface so the server itself joins the
+// VPN subnet. In relay mode it skips TUN creation entirely — the server acts
+// purely as a packet relay between clients and needs no CAP_NET_ADMIN.
 func NewTunnelServer(db *sql.DB, cfg *config.Config) (*TunnelServer, error) {
+	ts := &TunnelServer{
+		db:     db,
+		cfg:    cfg,
+		router: NewRouter(),
+	}
+	if cfg.Mode == config.ModeRelay {
+		// tun / tunName / tunIP 保持零值:tun==nil 即 relay 标志,
+		// Start / routeClientPacket / Close 据此走 nil 守卫分支。
+		return ts, nil
+	}
+
 	srvIP, err := serverIP(cfg.Network)
 	if err != nil {
 		return nil, err
@@ -77,19 +91,18 @@ func NewTunnelServer(db *sql.DB, cfg *config.Config) (*TunnelServer, error) {
 		dev.Close()
 		return nil, err
 	}
-	return &TunnelServer{
-		db:      db,
-		cfg:     cfg,
-		tun:     dev,
-		tunName: name,
-		router:  NewRouter(),
-		tunIP:   netip.MustParseAddr(srvIP),
-	}, nil
+	ts.tun = dev
+	ts.tunName = name
+	ts.tunIP = netip.MustParseAddr(srvIP)
+	return ts, nil
 }
 
-// Start launches the TUN read loop and the periodic stats aggregation loop.
+// Start launches the TUN read loop (full mode only) and the periodic stats
+// aggregation loop. In relay mode there is no TUN to read.
 func (ts *TunnelServer) Start(ctx context.Context) {
-	go ts.readTUN(ctx)
+	if ts.tun != nil {
+		go ts.readTUN(ctx)
+	}
 	go ts.statsLoop(ctx)
 }
 
@@ -230,49 +243,64 @@ func (ts *TunnelServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 	ts.clientReadLoop(ctx, cc)
 }
 
-// clientReadLoop reads packets from a WebSocket client and routes them appropriately.
-// Packets destined for the server IP (10.100.0.1) are injected into the TUN device;
-// packets destined for other clients are forwarded directly via WS→WS routing.
+// clientReadLoop reads packets from a WebSocket client and dispatches each
+// via routeClientPacket until the context is cancelled or the connection errors.
 func (ts *TunnelServer) clientReadLoop(ctx context.Context, cc *ClientConn) {
 	for {
 		_, pkt, err := cc.Conn.Read(ctx)
 		if err != nil {
 			return
 		}
-
 		cc.RecordRx(len(pkt))
-
-		dst, err := ExtractDstIP(pkt)
-		if err != nil {
-			ts.parseErr.Add(1)
-			if debugPacket {
-				log.Printf("packet parse error: %v (len=%d)", err, len(pkt))
-			}
-			continue
-		}
-
-		if dst == ts.tunIP {
-			buf := make([]byte, meshtun.Offset()+len(pkt))
-			copy(buf[meshtun.Offset():], pkt)
-			bufs := [][]byte{buf}
-			if _, err := ts.tun.Write(bufs, meshtun.Offset()); err != nil {
-				log.Printf("write to TUN: %v", err)
-			}
-		} else if dest, ok := ts.router.Lookup(dst); ok {
-			// Hand off to the per-connection single writer. RecordTx is
-			// performed inside writeLoop after the frame is actually sent.
-			dest.Enqueue(Packet{Data: pkt})
-		} else {
-			ts.routeMiss.Add(1)
-			if debugPacket {
-				log.Printf("no route for %s", dst)
-			}
-		}
+		ts.routeClientPacket(pkt)
 	}
 }
 
-// Close shuts down the TUN device.
+// routeClientPacket handles a single IP packet arriving from a client:
+//   - destination is the server's own VPN IP (full mode only) → inject into TUN;
+//   - destination is another registered client → forward over its WS;
+//   - no route → routeMiss counter.
+//
+// In relay mode ts.tun==nil, so the first branch is skipped and every packet
+// is either forwarded to another client or counted as a route miss. Packets
+// addressed to the legacy server IP (e.g. 10.100.0.1) thus fall through to
+// routeMiss — expected, since a relay server offers no in-VPN service.
+func (ts *TunnelServer) routeClientPacket(pkt []byte) {
+	dst, err := ExtractDstIP(pkt)
+	if err != nil {
+		ts.parseErr.Add(1)
+		if debugPacket {
+			log.Printf("packet parse error: %v (len=%d)", err, len(pkt))
+		}
+		return
+	}
+
+	if ts.tun != nil && dst == ts.tunIP {
+		buf := make([]byte, meshtun.Offset()+len(pkt))
+		copy(buf[meshtun.Offset():], pkt)
+		bufs := [][]byte{buf}
+		if _, err := ts.tun.Write(bufs, meshtun.Offset()); err != nil {
+			log.Printf("write to TUN: %v", err)
+		}
+		return
+	}
+
+	if dest, ok := ts.router.Lookup(dst); ok {
+		dest.Enqueue(Packet{Data: pkt})
+		return
+	}
+
+	ts.routeMiss.Add(1)
+	if debugPacket {
+		log.Printf("no route for %s", dst)
+	}
+}
+
+// Close shuts down the TUN device. No-op in relay mode (no TUN was created).
 func (ts *TunnelServer) Close() error {
+	if ts.tun == nil {
+		return nil
+	}
 	return ts.tun.Close()
 }
 
