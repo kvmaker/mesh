@@ -86,11 +86,29 @@ func (s *Server) handleTunnel(w http.ResponseWriter, r *http.Request) {
 	s.tunnel.HandleWebSocket(w, r)
 }
 
+// serveMode 决定 HTTPS 服务如何启动:
+//   - "selfsigned": TLSTestMode(e2e 测试,内存自签证书)
+//   - "plain":      tls_mode: none(relay + 反向代理,纯 HTTP,不启动 autocert)
+//   - "autocert":   默认(Let's Encrypt + :80 ACME challenge)
+//
+// TLSTestMode(env MESH_TEST_TLS)优先级高于 yaml tls_mode:测试模式恒走自签。
+func (s *Server) serveMode() string {
+	if s.cfg.TLSTestMode {
+		return "selfsigned"
+	}
+	if s.cfg.TLSMode == config.TLSNone {
+		return "plain"
+	}
+	return "autocert"
+}
+
 // ListenAndServeTLS starts the HTTPS server.
 //
 // 生产环境使用 autocert（Let's Encrypt）+ :80 ACME challenge listener。
 // 当 cfg.TLSTestMode 为真（即 e2e 测试设置了 MESH_TEST_TLS=on）时，
 // 改用内存自签证书，完全不依赖 Let's Encrypt，也不监听 :80。
+// 当 tls_mode: none 时（relay 模式 + 反向代理），走纯 HTTP，
+// 既不启动 autocert 也不监听 :80。
 func (s *Server) ListenAndServeTLS(ctx context.Context) error {
 	srv := &http.Server{
 		Addr:    s.cfg.ListenAddr,
@@ -108,35 +126,37 @@ func (s *Server) ListenAndServeTLS(ctx context.Context) error {
 		srv.Close() //nolint:errcheck
 	}()
 
-	if s.cfg.TLSTestMode {
+	switch s.serveMode() {
+	case "selfsigned":
 		tlsCfg, err := s.selfSignedTLSConfig()
 		if err != nil {
 			return fmt.Errorf("self-signed cert: %w", err)
 		}
 		srv.TLSConfig = tlsCfg
 		return srv.ListenAndServeTLS("", "")
-	}
-
-	// 生产路径：autocert + Let's Encrypt
-	m := &autocert.Manager{
-		Cache:      autocert.DirCache(s.cfg.CertDir),
-		Prompt:     autocert.AcceptTOS,
-		HostPolicy: autocert.HostWhitelist(s.cfg.Domain),
-	}
-	srv.TLSConfig = &tls.Config{
-		GetCertificate: m.GetCertificate,
-		MinVersion:     tls.VersionTLS12,
-	}
-
-	// HTTP-01 ACME challenge listener on :80。监听失败（如 :80 被占用、
-	// 权限不足）会导致 Let's Encrypt 签发失败，必须记录而不是静默吞掉。
-	go func() {
-		if err := http.ListenAndServe(":80", m.HTTPHandler(nil)); err != nil {
-			log.Printf("ACME HTTP-01 listener on :80 failed: %v", err)
+	case "plain":
+		// tls_mode: none — 纯 HTTP,适用于 relay 模式配合反向代理(Caddy)。
+		// 不启动 autocert,不监听 :80。
+		return srv.ListenAndServe()
+	default: // "autocert"
+		m := &autocert.Manager{
+			Cache:      autocert.DirCache(s.cfg.CertDir),
+			Prompt:     autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(s.cfg.Domain),
 		}
-	}()
-
-	return srv.ListenAndServeTLS("", "")
+		srv.TLSConfig = &tls.Config{
+			GetCertificate: m.GetCertificate,
+			MinVersion:     tls.VersionTLS12,
+		}
+		// HTTP-01 ACME challenge listener on :80。监听失败（如 :80 被占用、
+		// 权限不足）会导致 Let's Encrypt 签发失败，必须记录而不是静默吞掉。
+		go func() {
+			if err := http.ListenAndServe(":80", m.HTTPHandler(nil)); err != nil {
+				log.Printf("ACME HTTP-01 listener on :80 failed: %v", err)
+			}
+		}()
+		return srv.ListenAndServeTLS("", "")
+	}
 }
 
 // selfSignedTLSConfig 生成一份内存中的 ECDSA P-256 自签证书，
