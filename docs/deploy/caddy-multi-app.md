@@ -24,18 +24,21 @@ curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh \
   | sudo bash -s -- server --mode relay --domain mesh.example.com
 ```
 
-生成的 `/etc/mesh/meshd.yaml` 含 `mode: relay`,systemd unit 不含 `CAP_NET_ADMIN`。
+生成的 `/etc/mesh/meshd.yaml` 含 `mode: relay` 与 `tls_mode: none`(meshd 走纯 HTTP);systemd unit 通过 `CapabilityBoundingSet=!CAP_NET_ADMIN CAP_NET_RAW` 显式 deny 这两项能力,即便以 root 启动也不具备创建 TUN/抓包的权限。
 
 ### 2. meshd 监听本地端口
 
-编辑 `/etc/mesh/meshd.yaml`,把 `listen_addr` 改为本地端口(让 Caddy 反代):
+`install.sh --mode relay` 生成的 yaml 已含 `mode: relay` 与 `tls_mode: none`。编辑 `/etc/mesh/meshd.yaml`,把 `listen_addr` 改为本地端口(让 Caddy 反代):
 
 ```yaml
 mode: relay
+tls_mode: none
 listen_addr: "127.0.0.1:8443"
 ```
 
-> relay 模式下 meshd 仍自带 TLS(autocert)。若希望 TLS 完全交由 Caddy 管理,后续可加 `tls_mode: none` 配置(当前未实现,Caddy 可改用 SNI 四层透传,此处从略)。
+> relay 模式下 install.sh 默认写入 `tls_mode: none`,meshd 走纯 HTTP,由 Caddy 统一终止 TLS 并签发证书。meshd 不启动 autocert、不监听 :80。
+
+meshd 现在是纯 HTTP 服务,Caddy 明文反代即可,无 TLS 握手问题。
 
 ### 3. 安装 Caddy
 

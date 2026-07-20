@@ -146,10 +146,15 @@ install_server() {
     mkdir -p /etc/mesh/certs
     chmod 700 /etc/mesh /etc/mesh/certs
 
+    local tls_mode_line=""
+    if [ "$mode" = "relay" ]; then
+        tls_mode_line="tls_mode: \"none\""
+    fi
     if [ ! -f /etc/mesh/meshd.yaml ]; then
         cat > /etc/mesh/meshd.yaml << EOF
 domain: "${domain}"
 mode: "${mode}"
+${tls_mode_line}
 listen_addr: ":443"
 network: "10.100.0.0/24"
 data_dir: "/etc/mesh"
@@ -165,9 +170,10 @@ EOF
     echo "==> 配置 systemd 服务"
     local caps_line="AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE"
     if [ "$mode" = "relay" ]; then
-        # relay 模式不创建 TUN,无需 CAP_NET_ADMIN/CAP_NET_RAW。
-        # 若配合反代绑本地高位端口,CAP_NET_BIND_SERVICE 也不需要,一并去掉。
-        caps_line="# relay 模式:无需特权能力(TUN/特权端口均不使用)"
+        # relay 模式:不创建 TUN、纯 HTTP 绑本地端口。
+        # CapabilityBoundingSet 显式 deny,确保即便以 root 启动也不具备
+        # CAP_NET_ADMIN/CAP_NET_RAW(防被攻破后创建 TUN/抓包)。
+        caps_line="CapabilityBoundingSet=!CAP_NET_ADMIN CAP_NET_RAW"
     fi
     cat > /etc/systemd/system/meshd.service << EOF
 [Unit]
