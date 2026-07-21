@@ -339,3 +339,25 @@ func TestRateLimiterSweepThrottled(t *testing.T) {
 		t.Fatal("throttled sweep should not evict entries within the same window")
 	}
 }
+
+func TestServeMode(t *testing.T) {
+	cases := []struct {
+		name     string
+		testMode bool
+		tlsMode  string
+		want     string
+	}{
+		{"autocert_default", false, config.TLSAutocert, "autocert"},
+		{"plain_none", false, config.TLSNone, "plain"},
+		{"selfsigned_testmode", true, config.TLSAutocert, "selfsigned"},
+		{"testmode_overrides_none", true, config.TLSNone, "selfsigned"}, // TLSTestMode 优先
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{cfg: &config.Config{TLSMode: tc.tlsMode, TLSTestMode: tc.testMode}}
+			if got := s.serveMode(); got != tc.want {
+				t.Fatalf("serveMode(): expected %q, got %q", tc.want, got)
+			}
+		})
+	}
+}

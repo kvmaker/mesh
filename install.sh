@@ -20,8 +20,11 @@ Mesh VPN 安装脚本
   install.sh uninstall                  卸载
 
 示例:
-  # 服务器
+  # 服务器(默认 full 模式,server 作为 VPN 节点)
   curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh | sudo bash -s -- server --domain vpn.example.com
+
+  # 服务器(relay 模式,纯中继,不创建 TUN,可降权/容器化)
+  curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh | sudo bash -s -- server --mode relay --domain vpn.example.com
 
   # 客户端（macOS/Linux）
   curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh | sudo bash -s -- client
@@ -115,13 +118,20 @@ install_binary() {
 
 install_server() {
     local domain=""
+    local mode="full"
 
     while [ $# -gt 0 ]; do
         case "$1" in
             --domain) domain="$2"; shift 2 ;;
+            --mode)   mode="$2"; shift 2 ;;
             *) shift ;;
         esac
     done
+
+    case "$mode" in
+        full|relay) ;;
+        *) echo "Error: --mode 仅支持 full 或 relay,得到 $mode"; exit 1 ;;
+    esac
 
     if [ -z "$domain" ]; then
         echo "Error: 需要指定 --domain"
@@ -136,10 +146,18 @@ install_server() {
     mkdir -p /etc/mesh/certs
     chmod 700 /etc/mesh /etc/mesh/certs
 
+    local tls_mode_line=""
+    local listen_addr_line="listen_addr: \":443\""
+    if [ "$mode" = "relay" ]; then
+        tls_mode_line="tls_mode: \"none\""
+        listen_addr_line="listen_addr: \"127.0.0.1:8443\""
+    fi
     if [ ! -f /etc/mesh/meshd.yaml ]; then
         cat > /etc/mesh/meshd.yaml << EOF
 domain: "${domain}"
-listen_addr: ":443"
+mode: "${mode}"
+${tls_mode_line}
+${listen_addr_line}
 network: "10.100.0.0/24"
 data_dir: "/etc/mesh"
 cert_dir: "/etc/mesh/certs"
@@ -152,9 +170,16 @@ EOF
     meshd init
 
     echo "==> 配置 systemd 服务"
-    cat > /etc/systemd/system/meshd.service << 'EOF'
+    local caps_line="AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE"
+    if [ "$mode" = "relay" ]; then
+        # relay 模式:不创建 TUN、纯 HTTP 绑本地端口。
+        # CapabilityBoundingSet 显式 deny,确保即便以 root 启动也不具备
+        # CAP_NET_ADMIN/CAP_NET_RAW(防被攻破后创建 TUN/抓包)。
+        caps_line="CapabilityBoundingSet=~CAP_NET_ADMIN CAP_NET_RAW"
+    fi
+    cat > /etc/systemd/system/meshd.service << EOF
 [Unit]
-Description=Mesh VPN Server
+Description=Mesh VPN Server (mode=${mode})
 After=network-online.target
 Wants=network-online.target
 
@@ -163,7 +188,7 @@ Type=simple
 ExecStart=/usr/local/bin/meshd run
 Restart=always
 RestartSec=5
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+${caps_line}
 
 [Install]
 WantedBy=multi-user.target

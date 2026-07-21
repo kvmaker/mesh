@@ -94,3 +94,71 @@ func TestLoadTLSTestModeFromEnv(t *testing.T) {
 		})
 	}
 }
+
+func TestModeDefault(t *testing.T) {
+	cfg := Default()
+	if cfg.Mode != ModeFull {
+		t.Fatalf("expected default Mode=%q, got %q", ModeFull, cfg.Mode)
+	}
+}
+
+func TestModeLoadValues(t *testing.T) {
+	cases := []struct {
+		yaml string
+		want string
+	}{
+		{"mode: full\n", ModeFull},
+		{"mode: relay\n", ModeRelay},
+		{"mode: RELAY\n", ModeRelay},   // 大小写不敏感
+		{"mode:  relay \n", ModeRelay}, // 容忍空白
+		{"domain: x.com\n", ModeFull},  // 未指定 → 默认 full
+		{"mode: foo\n", ModeFull},      // 非法 → 回退 full
+		{"mode: \n", ModeFull},         // 空值 → full
+	}
+	for _, tc := range cases {
+		t.Run(tc.yaml, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "cfg.yaml")
+			os.WriteFile(p, []byte(tc.yaml), 0644)
+			cfg, err := Load(p)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.Mode != tc.want {
+				t.Fatalf("yaml=%q: expected Mode=%q, got %q", tc.yaml, tc.want, cfg.Mode)
+			}
+		})
+	}
+}
+
+func TestTLSModeDefault(t *testing.T) {
+	if Default().TLSMode != TLSAutocert {
+		t.Fatalf("expected default TLSMode=%q, got %q", TLSAutocert, Default().TLSMode)
+	}
+}
+
+func TestTLSModeLoadValues(t *testing.T) {
+	cases := []struct {
+		yaml string
+		want string
+	}{
+		{"tls_mode: autocert\n", TLSAutocert},
+		{"tls_mode: none\n", TLSNone},
+		{"tls_mode: NONE\n", TLSNone},
+		{"tls_mode:  none \n", TLSNone},
+		{"domain: x.com\n", TLSAutocert}, // 未指定 → 默认
+		{"tls_mode: foo\n", TLSAutocert}, // 非法 → 回退
+	}
+	for _, tc := range cases {
+		t.Run(tc.yaml, func(t *testing.T) {
+			p := filepath.Join(t.TempDir(), "cfg.yaml")
+			os.WriteFile(p, []byte(tc.yaml), 0644)
+			cfg, err := Load(p)
+			if err != nil {
+				t.Fatalf("Load: %v", err)
+			}
+			if cfg.TLSMode != tc.want {
+				t.Fatalf("yaml=%q: expected TLSMode=%q, got %q", tc.yaml, tc.want, cfg.TLSMode)
+			}
+		})
+	}
+}
