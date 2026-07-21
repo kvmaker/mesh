@@ -175,7 +175,7 @@ EOF
         # relay 模式:不创建 TUN、纯 HTTP 绑本地端口。
         # CapabilityBoundingSet 显式 deny,确保即便以 root 启动也不具备
         # CAP_NET_ADMIN/CAP_NET_RAW(防被攻破后创建 TUN/抓包)。
-        caps_line="CapabilityBoundingSet=!CAP_NET_ADMIN CAP_NET_RAW"
+        caps_line="CapabilityBoundingSet=~CAP_NET_ADMIN CAP_NET_RAW"
     fi
     cat > /etc/systemd/system/meshd.service << EOF
 [Unit]

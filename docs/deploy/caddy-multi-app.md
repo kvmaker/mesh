@@ -24,7 +24,7 @@ curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh \
   | sudo bash -s -- server --mode relay --domain mesh.example.com
 ```
 
-生成的 `/etc/mesh/meshd.yaml` 含 `mode: relay` 与 `tls_mode: none`(meshd 走纯 HTTP);systemd unit 通过 `CapabilityBoundingSet=!CAP_NET_ADMIN CAP_NET_RAW` 显式 deny 这两项能力,即便以 root 启动也不具备创建 TUN/抓包的权限。
+生成的 `/etc/mesh/meshd.yaml` 含 `mode: relay` 与 `tls_mode: none`(meshd 走纯 HTTP);systemd unit 通过 `CapabilityBoundingSet=~CAP_NET_ADMIN CAP_NET_RAW` 显式 deny 这两项能力,即便以 root 启动也不具备创建 TUN/抓包的权限。
 
 ### 2. meshd 监听本地端口
 
