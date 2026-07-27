@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="360" viewBox="0 0 1200 360"
+     role="img" aria-labelledby="title desc">
+  <title id="title">mesh — 把内网流量伪装成标准 HTTPS 的自托管 VPN</title>
+  <desc id="desc">左侧为项目标题 mesh 与一句话说明；右侧展示核心机制：同一个数据包被层层封装，外层是 443 端口上的 TLS/HTTPS，中层是 WebSocket 二进制帧，内层是原始内网 IP 包，DPI 只能看到普通 HTTPS。</desc>
+
+  <defs>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+      .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; }
+    </style>
+  </defs>
+
+  <rect x="1" y="1" width="1198" height="358" rx="24" fill="#0B0E10"/>
+  <rect x="1.5" y="1.5" width="1197" height="357" rx="23.5" fill="none" stroke="#252B30" stroke-width="1"/>
+
+  <!-- ===== 左：标题块 ===== -->
+  <g transform="translate(64 0)" class="sans">
+    <text x="2" y="84" class="mono" font-size="20" letter-spacing="3" fill="#57D9C0">SELF-HOSTED · WEBSOCKET OVER TLS</text>
+
+    <text x="0" y="200" font-size="120" font-weight="800" fill="#E9ECEF">mesh</text>
+    <rect x="302" y="120" width="22" height="82" rx="3" fill="#57D9C0"/>
+
+    <text x="2" y="258" font-size="30" font-weight="600" fill="#E9ECEF">把内网流量伪装成标准 HTTPS 的自托管 VPN</text>
+    <text x="2" y="296" font-size="21" fill="#8B949E">原始 IP 包裹进 TLS 隧道，对 DPI 只是一次普通 HTTPS 会话</text>
+
+    <text x="2" y="336" class="mono" font-size="18" fill="#8B949E">Go 1.25 &#160;·&#160; macOS / Linux &#160;·&#160; 星型中继 · full / relay</text>
+  </g>
+
+  <!-- ===== 右：封装嵌套证明 ===== -->
+  <g transform="translate(0 0)" class="sans">
+    <text x="712" y="82" class="mono" font-size="17" fill="#8B949E">同一个数据包 · 三层视角</text>
+
+    <!-- 外层：HTTPS / TLS / :443 -->
+    <rect x="712" y="98" width="424" height="184" rx="16" fill="#0E1B19" stroke="#57D9C0" stroke-width="1.5"/>
+    <text x="732" y="126" class="mono" font-size="18" fill="#57D9C0">HTTPS · TLS 1.3 · :443</text>
+    <text x="1116" y="126" text-anchor="end" class="mono" font-size="15" fill="#57D9C0" opacity="0.8">对外可见</text>
+
+    <!-- 中层：WebSocket Binary Frame -->
+    <rect x="742" y="146" width="364" height="112" rx="12" fill="#0F171A" stroke="#3A4F57" stroke-width="1.5"/>
+    <text x="762" y="172" class="mono" font-size="17" fill="#B7C0C7">WebSocket Binary Frame</text>
+
+    <!-- 内层：原始 IP 包 -->
+    <rect x="772" y="190" width="304" height="52" rx="8" fill="#231C10" stroke="#F0B866" stroke-width="1.5"/>
+    <text x="924" y="222" text-anchor="middle" class="mono" font-size="18" fill="#F0B866">IP 10.100.0.2 &#8594; 10.100.0.3</text>
+  </g>
+</svg>

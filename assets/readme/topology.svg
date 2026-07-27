@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="400" viewBox="0 0 1200 400"
+     role="img" aria-labelledby="title desc">
+  <title id="title">mesh 架构：星型拓扑与服务器的 full / relay 两种模式</title>
+  <desc id="desc">左侧为星型拓扑：多个客户端各自通过 wss（WebSocket over TLS，443 端口）连到中心的 meshd 服务器，所有客户端间流量都经服务器中继。右侧对比服务器两种模式：full 模式下服务器创建 TUN、分配 10.100.0.1、自身也是 VPN 节点；relay 模式下服务器纯中继、不建 TUN、可降权或容器化并配合外部反向代理终结 TLS。</desc>
+
+  <defs>
+    <style>
+      .sans { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", sans-serif; }
+      .mono { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; }
+    </style>
+  </defs>
+
+  <rect x="1" y="1" width="1198" height="398" rx="24" fill="#0B0E10"/>
+  <rect x="1.5" y="1.5" width="1197" height="397" rx="23.5" fill="none" stroke="#252B30" stroke-width="1"/>
+
+  <!-- ===== 左：星型拓扑 ===== -->
+  <text x="48" y="52" class="sans" font-size="22" font-weight="600" fill="#E9ECEF">星型拓扑 · 流量全部经服务器中继</text>
+
+  <!-- 连线（先画，压在节点下） -->
+  <g stroke="#57D9C0" stroke-width="1.5" opacity="0.55">
+    <path d="M190 132 L286 196" fill="none"/>
+    <path d="M190 318 L286 214" fill="none"/>
+    <path d="M556 322 L410 232" fill="none"/>
+  </g>
+  <g class="mono" font-size="14" fill="#57D9C0">
+    <text x="212" y="152">wss://</text>
+    <text x="212" y="292">wss://</text>
+    <text x="470" y="292">wss://</text>
+  </g>
+
+  <!-- 服务器 -->
+  <rect x="286" y="168" width="184" height="88" rx="14" fill="#0E1B19" stroke="#57D9C0" stroke-width="1.5"/>
+  <text x="378" y="206" text-anchor="middle" class="sans" font-size="24" font-weight="700" fill="#E9ECEF">meshd</text>
+  <text x="378" y="232" text-anchor="middle" class="mono" font-size="15" fill="#57D9C0">:443 · TLS 1.3</text>
+
+  <!-- 客户端 A -->
+  <rect x="42" y="72" width="152" height="66" rx="12" fill="#131719" stroke="#252B30" stroke-width="1.5"/>
+  <text x="118" y="104" text-anchor="middle" class="sans" font-size="20" font-weight="600" fill="#E9ECEF">Client A</text>
+  <text x="118" y="126" text-anchor="middle" class="mono" font-size="14" fill="#8B949E">10.100.0.2 · TUN</text>
+
+  <!-- 客户端 B -->
+  <rect x="42" y="286" width="152" height="66" rx="12" fill="#131719" stroke="#252B30" stroke-width="1.5"/>
+  <text x="118" y="318" text-anchor="middle" class="sans" font-size="20" font-weight="600" fill="#E9ECEF">Client B</text>
+  <text x="118" y="340" text-anchor="middle" class="mono" font-size="14" fill="#8B949E">10.100.0.3 · TUN</text>
+
+  <!-- 客户端 C -->
+  <rect x="486" y="286" width="152" height="66" rx="12" fill="#131719" stroke="#252B30" stroke-width="1.5"/>
+  <text x="562" y="318" text-anchor="middle" class="sans" font-size="20" font-weight="600" fill="#E9ECEF">Client C</text>
+  <text x="562" y="340" text-anchor="middle" class="mono" font-size="14" fill="#8B949E">10.100.0.4 · TUN</text>
+
+  <!-- 分隔线 -->
+  <line x1="690" y1="48" x2="690" y2="352" stroke="#252B30" stroke-width="1"/>
+
+  <!-- ===== 右：两种模式 ===== -->
+  <text x="726" y="52" class="sans" font-size="22" font-weight="600" fill="#E9ECEF">服务器两种模式</text>
+
+  <!-- full -->
+  <rect x="726" y="72" width="426" height="128" rx="14" fill="#131719" stroke="#252B30" stroke-width="1.5"/>
+  <text x="750" y="112" class="mono" font-size="24" font-weight="700" fill="#57D9C0">full</text>
+  <rect x="806" y="92" width="66" height="26" rx="8" fill="#0E1B19" stroke="#57D9C0" stroke-width="1"/>
+  <text x="839" y="110" text-anchor="middle" class="mono" font-size="14" fill="#57D9C0">默认</text>
+  <text x="750" y="146" class="sans" font-size="19" fill="#C6CDD3">server 建 TUN、分配 10.100.0.1</text>
+  <text x="750" y="176" class="sans" font-size="19" fill="#8B949E">自身即 VPN 节点，可被 ping</text>
+
+  <!-- relay -->
+  <rect x="726" y="216" width="426" height="128" rx="14" fill="#131719" stroke="#252B30" stroke-width="1.5"/>
+  <text x="750" y="256" class="mono" font-size="24" font-weight="700" fill="#F0B866">relay</text>
+  <rect x="820" y="236" width="132" height="26" rx="8" fill="#231C10" stroke="#F0B866" stroke-width="1"/>
+  <text x="886" y="254" text-anchor="middle" class="mono" font-size="14" fill="#F0B866">可降权 / 容器化</text>
+  <text x="750" y="290" class="sans" font-size="19" fill="#C6CDD3">纯中继，不建 TUN、不分配 IP</text>
+  <text x="750" y="320" class="sans" font-size="19" fill="#8B949E">配合 tls_mode:none 由反代终结 TLS</text>
+</svg>
