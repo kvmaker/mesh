@@ -1,28 +1,31 @@
-# Mesh VPN
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="mesh — 把内网流量伪装成标准 HTTPS 的自托管 VPN；核心机制是将原始内网 IP 包层层封装进 WebSocket 与 TLS，最终以 443 端口的普通 HTTPS 会话出现在链路上">
+</p>
 
-基于 WebSocket over TLS 的自托管内网互联系统。所有流量伪装为标准 HTTPS，无法被 DPI 识别。
+**mesh** 是一个纯 Go 实现的自托管 VPN。它把你的内网 IP 流量层层封装进 WebSocket over TLS，对外只表现为一次落在 **443 端口的普通 HTTPS 会话**——DPI（深度包检测）看不出这是 VPN。零外部命令依赖，一条 `curl` 完成安装。
 
-## 特性
+- 🕵️ **完全伪装成 HTTPS** — 端口 443、合法 Let's Encrypt 证书、TLS 1.3，链路上与真实网站流量无法区分
+- 🧩 **纯 Go，零依赖** — 不调用 `ip` / `wg` / `openssl` 等外部命令，单二进制即可运行
+- ⭐ **星型拓扑** — 所有客户端间流量经服务器中继，无需两两打洞
+- 🔁 **断线自动重连** — 网络抖动、切换 Wi‑Fi 后隧道自愈
+- 🪶 **服务器可降权** — `relay` 模式纯中继、不建 TUN，可容器化并交给反代终结 TLS
+- 💻 **跨平台** — 支持 macOS (arm64) 与 Linux (amd64)
 
-- 流量完全伪装为 HTTPS（端口 443，合法 TLS 证书）
-- 纯 Go 实现，零外部命令依赖
-- 星型拓扑，所有流量经服务器中继
-- 自动获取 Let's Encrypt 证书
-- 断线自动重连
-- 支持 macOS (arm64) 和 Linux (amd64)
+---
 
-## 架构
+<p align="center">
+  <img src="./assets/readme/section-how.svg" width="100%" alt="章节：工作原理">
+</p>
 
-```
-┌─────────┐    wss://domain/tunnel     ┌──────────┐    wss://domain/tunnel    ┌─────────┐
-│ Client A│◄──────────────────────────►│  Server  │◄────────────────────────►│ Client B│
-│ (TUN)   │      TLS 1.3 / :443       │  (TUN)   │      TLS 1.3 / :443     │ (TUN)   │
-└─────────┘                            └──────────┘                          └─────────┘
-```
+mesh 不做 NAT，也不改写源/目的 IP：它只负责把 TUN 设备读到的**原始 IP 包**原封不动地塞进 WebSocket 二进制帧，套上 TLS 送到服务器，服务器解析 IP 头里的目的地址查路由，再把同一个包转发给目标客户端。应用层看到的始终是普通内网通信。
 
-### 完整报文转发示意
+<p align="center">
+  <img src="./assets/readme/topology.svg" width="100%" alt="mesh 架构：多个客户端各自通过 wss（WebSocket over TLS，443 端口）连到中心 meshd 服务器组成星型拓扑；服务器支持 full 模式（建 TUN、分配 10.100.0.1、自身即 VPN 节点）与 relay 模式（纯中继、不建 TUN、可降权容器化并配合反代终结 TLS）">
+</p>
 
-以 `Client A = 10.100.0.2` ping `Client B = 10.100.0.3` 为例，应用看到的是普通内网 IP 通信；Mesh 只负责把原始 IP 包装进 WebSocket/TLS 隧道，中间不做 NAT，也不改写源/目的 IP。
+### 报文如何转发
+
+以 `Client A = 10.100.0.2` ping `Client B = 10.100.0.3` 为例：
 
 ```mermaid
 sequenceDiagram
@@ -50,7 +53,7 @@ sequenceDiagram
     TunA->>AppA: ping 收到回复
 ```
 
-报文在不同层看到的形态大致如下：
+报文在不同层看到的形态：
 
 | 位置 | 报文形态 | 说明 |
 |------|----------|------|
@@ -61,170 +64,83 @@ sequenceDiagram
 | server → Client B | `WebSocket Binary Frame(payload=同一个原始 IP 包)` | 不做 NAT，不重写 `src/dst` |
 | Client B TUN/内核 | `ICMP Echo Request` inside `IP(10.100.0.2 → 10.100.0.3)` | 内核像收到普通内网包一样处理并生成回包 |
 
-如果 ping 的目标是服务器自身 `10.100.0.1`，server 发现目的地址等于自己的 TUN IP 后，会把包写入 server TUN，让服务器内核处理；服务器内核生成的 Echo Reply 再由 server 从 TUN 读出，并按目的地址转发回对应客户端。
+> 若 ping 的目标是服务器自身 `10.100.0.1`（仅 `full` 模式有此 IP），server 发现目的地址等于自己的 TUN IP 后，会把包写入 server TUN 让内核处理；生成的 Echo Reply 再由 server 从 TUN 读出并转发回对应客户端。
 
-## 安装
+---
 
-### 一键安装（推荐）
+<p align="center">
+  <img src="./assets/readme/section-quickstart.svg" width="100%" alt="章节：快速开始">
+</p>
+
+最快路径：一条 `curl` 装好服务器，一条 `curl` 装好客户端，注册后即可互 ping。
+
+**1. 服务器**（Linux，需 root，需一个 DNS A 记录已指向本机的域名）
 
 ```bash
-# 服务器（Linux，需要 root）
 curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh | sudo bash -s -- server --domain your.domain.com
+```
 
-# 客户端（macOS / Linux，需要 root）
+安装完成后查看注册 Token：
+
+```bash
+sudo meshd token show
+```
+
+**2. 客户端**（macOS / Linux，需 root）
+
+```bash
 curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh | sudo bash -s -- client
-
-# 卸载
-curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh | sudo bash -s -- uninstall
 ```
 
-### 从源码构建
+**3. 注册并启动隧道**
 
 ```bash
-# 服务器（Linux amd64）
-GOOS=linux GOARCH=amd64 go build -o meshd ./cmd/meshd
-
-# 客户端（macOS arm64）
-GOOS=darwin GOARCH=arm64 go build -o mesh ./cmd/mesh
-
-# 客户端（Linux amd64）
-GOOS=linux GOARCH=amd64 go build -o mesh ./cmd/mesh
+mesh join your.domain.com --token <上一步的 Token>   # 注册设备，无需 root
+sudo mesh up                                          # 启动隧道，创建 TUN 设备
 ```
 
-或使用 Makefile：
+**4. 验证连通**
 
 ```bash
-make build-linux    # 生成 bin/meshd-linux-amd64 + bin/mesh-linux-amd64
-make build-darwin   # 生成 bin/mesh-darwin-arm64
+ping 10.100.0.1     # ping 服务器（full 模式）
+ping 10.100.0.x     # ping 其他客户端
+mesh status         # 查看隧道与在线节点
 ```
 
-## 部署
+---
+
+<p align="center">
+  <img src="./assets/readme/section-deploy.svg" width="100%" alt="章节：部署">
+</p>
 
 ### 前提条件
 
 - 一台有公网 IP 的 Linux 服务器
 - 一个域名，DNS A 记录指向服务器 IP
-- 服务器开放端口 443（HTTPS）和 80（ACME 证书验证）
+- 服务器开放端口 **443**（HTTPS）与 **80**（ACME 证书验证）
 
-### 方式一：使用安装脚本（推荐）
+### relay 模式（降权 / 容器化 / 反代）
 
-#### 服务器
+若你不希望服务器创建 TUN、持有 `CAP_NET_ADMIN`，或想把 TLS 交给已有的反向代理（如 Caddy）终结，用 `relay` 模式：服务器只做纯中继，默认监听 `127.0.0.1:8443` 并启用 `tls_mode: none`。
 
 ```bash
-# 构建
-make build-linux
-
-# 上传并安装（一键完成：安装二进制 + 创建配置 + 初始化 + 创建 systemd 服务）
-scp bin/meshd-linux-amd64 scripts/install-server.sh user@server:/tmp/
-ssh user@server "sudo /tmp/install-server.sh /tmp/meshd-linux-amd64"
-
-# 修改配置中的 domain 字段
-ssh user@server "sudo vi /etc/mesh/meshd.yaml"
-
-# 启动
-ssh user@server "sudo systemctl start meshd"
+curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh | sudo bash -s -- server --mode relay --domain your.domain.com
 ```
 
-#### macOS 客户端
+多应用共用一台机器、由 Caddy 反代到 meshd 的完整配置见 [`docs/deploy/caddy-multi-app.md`](docs/deploy/caddy-multi-app.md)。
+
+### 卸载
 
 ```bash
-# 构建
-make build-darwin
-
-# 安装（安装二进制 + 创建 launchd plist）
-sudo ./scripts/install-client.sh bin/mesh-darwin-arm64
-
-# 注册（不需要 root）
-mesh join your-domain.com --token <token>
-
-# 启动后台服务
-sudo launchctl load /Library/LaunchDaemons/com.mesh.vpn.plist
-```
-
-#### Linux 客户端
-
-```bash
-# 构建
-make build-linux
-
-# 安装（安装二进制 + 创建 systemd 服务）
-sudo ./scripts/install-client.sh bin/mesh-linux-amd64
-
-# 注册
-mesh join your-domain.com --token <token>
-
-# 启动后台服务
-sudo systemctl start mesh
-```
-
-#### 卸载
-
-```bash
-sudo ./scripts/uninstall.sh
-```
-
-### 方式二：手动部署
-
-```bash
-# 1. 上传二进制
-scp meshd user@server:/usr/local/bin/meshd
-
-# 2. 创建配置
-sudo mkdir -p /etc/mesh/certs
-sudo cat > /etc/mesh/meshd.yaml << 'EOF'
-domain: "your-domain.com"
-listen_addr: ":443"
-network: "10.100.0.0/24"
-data_dir: "/etc/mesh"
-cert_dir: "/etc/mesh/certs"
-tun_name: "mesh0"
-tun_mtu: 1300
-EOF
-
-# 3. 初始化（生成 Token）
-sudo meshd init
-
-# 4. 创建 systemd 服务
-sudo cat > /etc/systemd/system/meshd.service << 'EOF'
-[Unit]
-Description=Mesh VPN Server
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/meshd run
-Restart=always
-RestartSec=5
-AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-# 5. 启动
-sudo systemctl daemon-reload
-sudo systemctl enable --now meshd
-```
-
-### 客户端使用
-
-```bash
-# 1. 注册设备（不需要 root）
-mesh join your-domain.com --token <token>
-
-# 2. 启动隧道（需要 root，创建 TUN 设备）
-sudo mesh up
-
-# 3. 验证连接
-ping 10.100.0.1    # ping 服务器
-ping 10.100.0.x    # ping 其他客户端
+curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh | sudo bash -s -- uninstall
 ```
 
 ### macOS 后台服务（launchd）
 
+`sudo mesh up` 默认前台运行。要开机自启、掉线自拉起，注册为 launchd 守护进程：
+
 ```bash
-sudo cat > /Library/LaunchDaemons/com.mesh.vpn.plist << 'EOF'
+sudo tee /Library/LaunchDaemons/com.mesh.vpn.plist > /dev/null << 'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -256,64 +172,132 @@ EOF
 sudo launchctl load /Library/LaunchDaemons/com.mesh.vpn.plist
 ```
 
-## 管理命令
-
-### 服务器
+### 从源码构建
 
 ```bash
-meshd init              # 初始化（生成密钥和 Token）
-meshd run               # 启动服务
-meshd token show        # 查看注册 Token
-meshd token reset       # 重新生成 Token
-meshd device list       # 列出所有设备
+# 服务器（Linux amd64）
+GOOS=linux GOARCH=amd64 go build -o meshd ./cmd/meshd
+
+# 客户端（macOS arm64 / Linux amd64）
+GOOS=darwin GOARCH=arm64 go build -o mesh ./cmd/mesh
+GOOS=linux  GOARCH=amd64 go build -o mesh ./cmd/mesh
+```
+
+或用 Makefile：
+
+```bash
+make build-linux    # bin/meshd-linux-amd64 + bin/mesh-linux-amd64
+make build-darwin   # bin/mesh-darwin-arm64
+```
+
+### 手动部署（不使用安装脚本）
+
+```bash
+# 1. 上传二进制
+scp meshd user@server:/usr/local/bin/meshd
+
+# 2. 创建配置
+sudo mkdir -p /etc/mesh/certs
+sudo tee /etc/mesh/meshd.yaml > /dev/null << 'EOF'
+domain: "your-domain.com"
+listen_addr: ":443"
+network: "10.100.0.0/24"
+data_dir: "/etc/mesh"
+cert_dir: "/etc/mesh/certs"
+tun_name: "mesh0"
+tun_mtu: 1300
+mode: "full"          # full（默认，建 TUN）或 relay（纯中继）
+tls_mode: "autocert"  # autocert（Let's Encrypt，默认）或 none（由反代终结 TLS）
+EOF
+
+# 3. 初始化（生成密钥与 Token）
+sudo meshd init
+
+# 4. 创建 systemd 服务
+sudo tee /etc/systemd/system/meshd.service > /dev/null << 'EOF'
+[Unit]
+Description=Mesh VPN Server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/meshd run
+Restart=always
+RestartSec=5
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 5. 启动
+sudo systemctl daemon-reload
+sudo systemctl enable --now meshd
+```
+
+---
+
+<p align="center">
+  <img src="./assets/readme/section-commands.svg" width="100%" alt="章节：命令参考">
+</p>
+
+### 服务器 `meshd`
+
+```bash
+meshd init                     # 初始化（生成密钥和 Token）
+meshd run                      # 启动服务
+meshd token show               # 查看注册 Token
+meshd token reset              # 重新生成 Token
+meshd device list              # 列出所有设备
 meshd device remove <name|id>  # 移除设备
 ```
 
-### 客户端
+### 客户端 `mesh`
 
 ```bash
-mesh join <domain> --token <token>  # 注册设备
+mesh join <domain> --token <token>  # 注册设备（无需 root）
 mesh up                             # 启动隧道（需 sudo）
-mesh status                         # 查看状态
+mesh status                         # 查看隧道状态
+mesh peers                          # 查看在线节点
 mesh leave                          # 注销并清理
 ```
 
-## 网络规划
+### 网络规划
 
 | 角色 | IP |
 |------|-----|
-| 服务器 | 10.100.0.1 |
-| 客户端（自动分配） | 10.100.0.2 ~ 10.100.0.254 |
+| 服务器（仅 full 模式） | `10.100.0.1` |
+| 客户端（自动分配） | `10.100.0.2` ~ `10.100.0.254` |
 
-## e2e 测试
+---
 
-基于 Docker 的端到端测试（3 容器：1 server + 2 client），验证连通性、性能、故障恢复。
+<p align="center">
+  <img src="./assets/readme/section-tests.svg" width="100%" alt="章节：测试与技术栈">
+</p>
+
+### e2e 测试
+
+基于 Docker 的端到端测试（3 容器：1 server + 2 client），验证连通性、性能与故障恢复。
 
 ```bash
-# 快速模式（连通性 + 性能，约 2-3 分钟）
-bash tests/e2e/run.sh --quick
-
-# 全量（含故障场景）
-bash tests/e2e/run.sh --all
-
-# 单个场景
-bash tests/e2e/run.sh --scenario 01
-
-# 性能硬门槛（release 用）
-STRICT=1 bash tests/e2e/run.sh --quick
+bash tests/e2e/run.sh --quick          # 快速模式（连通性 + 性能，约 2-3 分钟）
+bash tests/e2e/run.sh --all            # 全量（含故障场景）
+bash tests/e2e/run.sh --scenario 01    # 单个场景
+STRICT=1 bash tests/e2e/run.sh --quick # 性能硬门槛（release 用）
 ```
 
-结果输出到 `tests/e2e/results/<timestamp>/`，含各场景 JSON 指标和 `summary.txt`。
+结果输出到 `tests/e2e/results/<timestamp>/`，含各场景 JSON 指标和 `summary.txt`。详见 [`docs/superpowers/specs/2026-07-08-e2e-docker-design.md`](docs/superpowers/specs/2026-07-08-e2e-docker-design.md)。
 
-> 注：macOS 本机若 docker 走 colima，需先 `export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock`；CI（ubuntu-latest）无需。
+> macOS 本机若 docker 走 colima，需先 `export DOCKER_HOST=unix://$HOME/.colima/default/docker.sock`；CI（ubuntu-latest）无需。
 
-详见 `docs/superpowers/specs/2026-07-08-e2e-docker-design.md`。
+### 技术栈
 
-## 技术栈
-
-- Go 1.22+
-- WebSocket: [github.com/coder/websocket](https://github.com/coder/websocket)
-- TUN: [golang.zx2c4.com/wireguard/tun](https://golang.zx2c4.com/wireguard)（仅 TUN 设备抽象）
-- TLS: Let's Encrypt via `golang.org/x/crypto/acme/autocert`
-- 数据库: SQLite via `modernc.org/sqlite`
-- CLI: `github.com/spf13/cobra`
+| 用途 | 选型 |
+|------|------|
+| 语言 | Go 1.25+ |
+| WebSocket | [`github.com/coder/websocket`](https://github.com/coder/websocket) |
+| TUN 设备 | [`golang.zx2c4.com/wireguard/tun`](https://golang.zx2c4.com/wireguard)（仅 TUN 抽象） |
+| TLS 证书 | Let's Encrypt via `golang.org/x/crypto/acme/autocert` |
+| 数据库 | SQLite via `modernc.org/sqlite` |
+| CLI | [`github.com/spf13/cobra`](https://github.com/spf13/cobra) |
