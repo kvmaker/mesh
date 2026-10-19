@@ -10,7 +10,10 @@ permissions:
 
 jobs:
   release:
-    runs-on: ubuntu-latest
+    # macOS runner：darwin 产物需要 codesign 签名（ssh 等 GUI-less 环境
+    # 无法非交互使用钥匙串私钥；macOS runner 带 GUI 会话，标准配方可用）。
+    # Linux 产物在此交叉编译，行为不变。
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -21,11 +24,36 @@ jobs:
       - name: Run tests
         run: go test ./...
 
+      - name: Set up signing keychain
+        env:
+          MESH_SIGNING_P12: ${{ secrets.MESH_SIGNING_P12 }}
+          MESH_SIGNING_PASS: ${{ secrets.MESH_SIGNING_PASS }}
+        run: |
+          # 自签代码签名证书 mesh-dev（目标机需信任该证书，见 README）。
+          # p12 为 legacy 算法格式（openssl 3 默认算法与 macOS 钥匙串不兼容），
+          # 内层加密较弱，外层由 GitHub secrets 加密存储兜底。
+          CERT_P12=$(mktemp -d)/cert.p12
+          echo "$MESH_SIGNING_P12" | base64 -d > "$CERT_P12"
+          KEYCHAIN=mesh-sign.keychain-db
+          security create-keychain -p "$MESH_SIGNING_PASS" "$KEYCHAIN"
+          security unlock-keychain -p "$MESH_SIGNING_PASS" "$KEYCHAIN"
+          security import "$CERT_P12" -k "$KEYCHAIN" -P "$MESH_SIGNING_PASS" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -k "$MESH_SIGNING_PASS" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN"
+          rm -rf "$(dirname "$CERT_P12")"
+          # 自检：identity 可用且能实际签名，失败早暴露而非卡在构建中途。
+          security find-identity -p codesigning "$KEYCHAIN" | grep -q mesh-dev \
+            || { echo "mesh-dev identity not found in keychain"; exit 1; }
+          printf 'int main(){return 0;}' | cc -x c -o /tmp/sigcheck - && \
+            codesign --keychain "$KEYCHAIN" -f -s mesh-dev /tmp/sigcheck \
+            || { echo "test signing failed"; exit 1; }
+
       - name: Build binaries
         run: |
           mkdir -p dist
           # 版本号注入：GITHUB_REF_NAME 即 tag 名（vX.Y.Z），未注入时 mesh version 显示 dev。
           LDFLAGS="-s -w -X github.com/maxyu/mesh/internal/common/version.Version=${GITHUB_REF_NAME}"
+          SIGN="codesign --keychain mesh-sign.keychain-db -f -s mesh-dev --identifier com.mesh.vpn"
           # Server (Linux amd64)
           GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/meshd ./cmd/meshd
           tar -czf dist/meshd_${GITHUB_REF_NAME#v}_linux_amd64.tar.gz -C dist meshd
@@ -34,12 +62,15 @@ jobs:
           GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/mesh ./cmd/mesh
           tar -czf dist/mesh_${GITHUB_REF_NAME#v}_linux_amd64.tar.gz -C dist mesh
           rm dist/mesh
-          # Client (macOS arm64)
+          # Client (macOS arm64) — darwin 产物签稳定身份（mesh-dev），规避
+          # ad-hoc 身份随内容变化导致 LaunchDaemon 信任校验（LWCR）失败。
           GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/mesh ./cmd/mesh
+          $SIGN dist/mesh
           tar -czf dist/mesh_${GITHUB_REF_NAME#v}_darwin_arm64.tar.gz -C dist mesh
           rm dist/mesh
           # Client (macOS amd64)
           GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/mesh ./cmd/mesh
+          $SIGN dist/mesh
           tar -czf dist/mesh_${GITHUB_REF_NAME#v}_darwin_amd64.tar.gz -C dist mesh
           rm dist/mesh
 

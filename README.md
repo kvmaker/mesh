@@ -122,6 +122,8 @@ curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh | su
 > 🐢 境内云服务器直连 GitHub 下载 meshd 较慢，服务器升级可改用本地构建：
 > `GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o meshd ./cmd/meshd`，scp 上去后 `sudo install -m 755 meshd /usr/local/bin/meshd && sudo systemctl restart meshd`。
 
+**macOS 签名说明**：darwin 产物带 `mesh-dev` 自签证书的稳定签名（证书公钥随仓库分发在 `scripts/certs/mesh-dev.crt`）。macOS 客户端首次安装时脚本会自动导入并信任该证书——之后每次升级换二进制，签名身份不变，LaunchDaemon 的信任校验（LWCR）不会被 ad-hoc 身份变化卡住。
+
 ---
 
 <p align="center">
