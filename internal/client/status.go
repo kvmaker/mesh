@@ -2,6 +2,7 @@ package client
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -77,7 +78,14 @@ func isProcessAlive(pid int) bool {
 	if err != nil {
 		return false
 	}
-	return proc.Signal(syscall.Signal(0)) == nil
+	err = proc.Signal(syscall.Signal(0))
+	if err == nil {
+		return true
+	}
+	// EPERM：进程存在但探测者无权限（普通用户探测 root 跑的 mesh up）。
+	// 只有 ESRCH 才代表进程不存在。修复前 root 进程被误判死亡，
+	// mesh status 恒报 "not running (stale)"。
+	return errors.Is(err, syscall.EPERM)
 }
 
 func formatDuration(d time.Duration) string {

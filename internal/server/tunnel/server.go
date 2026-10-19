@@ -34,6 +34,19 @@ var debugPacket = func() bool {
 // statsInterval 是聚合统计日志的输出周期。
 const statsInterval = 30 * time.Second
 
+// 服务端心跳参数：每 heartbeatInterval 向客户端发一次 WebSocket Ping，
+// 连续 heartbeatMaxFailures 次失败（每次最多等 heartbeatTimeout）即判定
+// 连接死亡并主动关闭。半开连接（Wi-Fi 瞬断、NAT 表项过期）不会产生 TCP
+// FIN/RST，Conn.Read 会永久阻塞，僵尸路由只能等 TCP 栈自行超时（可达数
+// 小时）。主动探测把清理时间收敛到 ~100s。
+//
+// 用 var 而非 const 仅为测试可缩短等待；生产语义见默认值。
+var (
+	heartbeatInterval    = 30 * time.Second
+	heartbeatTimeout     = 10 * time.Second
+	heartbeatMaxFailures = 3
+)
+
 // TunnelServer manages TUN device and WebSocket connections for the mesh VPN.
 type TunnelServer struct {
 	db      *sql.DB
@@ -230,17 +243,56 @@ func (ts *TunnelServer) HandleWebSocket(w http.ResponseWriter, r *http.Request) 
 	if err := device.UpdateOnline(ts.db, dev.ID, true); err != nil {
 		log.Printf("update online status for %s: %v", dev.ID, err)
 	}
-	defer func() {
-		if err := device.UpdateOnline(ts.db, dev.ID, false); err != nil {
-			log.Printf("update offline status for %s: %v", dev.ID, err)
-		}
-	}()
+	defer ts.markOfflineIfCurrent(*dev, ip, cc)
 
 	log.Printf("device %s (%s) connected", dev.Name, dev.IP)
 	defer log.Printf("device %s (%s) disconnected", dev.Name, dev.IP)
 
-	ctx := r.Context()
+	// cancel 让心跳失败能立即唤醒阻塞在 Conn.Read 上的 clientReadLoop。
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	// 心跳：主动探测半死连接（见常量注释）。失败到阈值即 cancel 整个
+	// handler，走 defer 链清理路由与在线状态。
+	go func() {
+		ticker := time.NewTicker(heartbeatInterval)
+		defer ticker.Stop()
+		failures := 0
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				pingCtx, pingCancel := context.WithTimeout(ctx, heartbeatTimeout)
+				err := cc.Conn.Ping(pingCtx)
+				pingCancel()
+				if err == nil {
+					failures = 0
+					continue
+				}
+				failures++
+				if failures >= heartbeatMaxFailures {
+					log.Printf("device %s (%s) heartbeat failed %d times, closing", dev.Name, dev.IP, failures)
+					cancel()
+					return
+				}
+			}
+		}
+	}()
+
 	ts.clientReadLoop(ctx, cc)
+}
+
+// markOfflineIfCurrent 把设备标 offline，但仅当该 IP 的路由仍指向本连
+// 接。设备快速重连时新连接已覆盖路由，旧连接退出不得把新连接的在线状态
+// 标错 —— 与 Router.UnregisterConn 的防误删同理。
+func (ts *TunnelServer) markOfflineIfCurrent(dev device.Device, ip netip.Addr, cc *ClientConn) {
+	if cur, ok := ts.router.Lookup(ip); !ok || cur != cc {
+		return
+	}
+	if err := device.UpdateOnline(ts.db, dev.ID, false); err != nil {
+		log.Printf("update offline status for %s: %v", dev.ID, err)
+	}
 }
 
 // clientReadLoop reads packets from a WebSocket client and dispatches each

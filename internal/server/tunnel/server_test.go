@@ -9,6 +9,7 @@ import (
 
 	"github.com/maxyu/mesh/internal/server/config"
 	"github.com/maxyu/mesh/internal/server/db"
+	"github.com/maxyu/mesh/internal/server/device"
 )
 
 func TestServerIP(t *testing.T) {
@@ -184,5 +185,52 @@ func TestRouteClientPacketRelayForwardsToClient(t *testing.T) {
 	ts.routeClientPacket(makeIPv4Packet(dstIP))
 	if got := cc.QueueDepth.Load(); got != 1 {
 		t.Fatalf("relay: expected packet forwarded to client, QueueDepth=%d", got)
+	}
+}
+
+// newTestTunnelServer 构造一个带临时 db 与空路由表的 TunnelServer（relay
+// 语义，tun==nil），供需要完整 server 的测试使用。
+func newTestTunnelServer(t *testing.T) *TunnelServer {
+	t.Helper()
+	return &TunnelServer{db: setupTestDB(t), router: NewRouter()}
+}
+
+// TestMarkOfflineIfCurrent：设备快速重连后，旧连接退出时不得把新连接的
+// 在线状态标成 offline；只有路由仍指向本连接时才允许标 offline。
+func TestMarkOfflineIfCurrent(t *testing.T) {
+	ts := newTestTunnelServer(t)
+	ip := netip.MustParseAddr("10.100.0.2")
+
+	dev, err := device.AllocateAndCreate(ts.db, "10.100.0.0/24", "dev1", "Mac.lan", "s3cret")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := device.UpdateOnline(ts.db, dev.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	oldConn := &ClientConn{DeviceID: dev.ID, IP: ip}
+	newConn := &ClientConn{DeviceID: dev.ID, IP: ip}
+	ts.router.Register(ip, oldConn)
+	ts.router.Register(ip, newConn) // 设备快速重连，路由已被新连接覆盖
+
+	// 旧连接的 defer 清理：不得标 offline。
+	ts.markOfflineIfCurrent(*dev, ip, oldConn)
+	got, err := device.GetByID(ts.db, dev.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Online {
+		t.Fatal("online status must survive stale conn cleanup after reconnect")
+	}
+
+	// 新连接正常退出：应标 offline。
+	ts.markOfflineIfCurrent(*dev, ip, newConn)
+	got, err = device.GetByID(ts.db, dev.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Online {
+		t.Fatal("device should be offline after current conn cleanup")
 	}
 }

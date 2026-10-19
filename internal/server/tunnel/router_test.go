@@ -139,6 +139,33 @@ func TestRouterRegisterOverwrite(t *testing.T) {
 	}
 }
 
+// TestRouterRegisterKicksStaleConn：同 IP 重连时 Register 必须关闭旧连接，
+// 否则旧连接的 HandleWebSocket 仍挂在阻塞的 Conn.Read 上成为孤儿——既占
+// goroutine，又会在 TCP 自然死亡时打出误导性 disconnected 日志。
+func TestRouterRegisterKicksStaleConn(t *testing.T) {
+	r := NewRouter()
+	ip := netip.MustParseAddr("10.100.0.2")
+	oldConn := &ClientConn{DeviceID: "dev1-old", IP: ip}
+	newConn := &ClientConn{DeviceID: "dev1-new", IP: ip}
+
+	r.Register(ip, oldConn)
+	r.Register(ip, newConn) // 重连覆盖：oldConn 应被关闭
+
+	if !oldConn.closed.Load() {
+		t.Fatal("stale conn should be closed after being overwritten")
+	}
+	got, ok := r.Lookup(ip)
+	if !ok || got != newConn {
+		t.Fatal("route must point at the new conn")
+	}
+
+	// 幂等：重复 Register 同一连接不应把自己关掉。
+	r.Register(ip, newConn)
+	if newConn.closed.Load() {
+		t.Fatal("re-registering the same conn must not close itself")
+	}
+}
+
 func TestRouterConcurrency(t *testing.T) {
 	r := NewRouter()
 	const numGoroutines = 100
