@@ -196,7 +196,14 @@ EOF
 
     systemctl daemon-reload
     systemctl enable meshd
-    systemctl start meshd
+    # 升级场景：systemctl start 对已运行服务是 no-op，不会加载新二进制，
+    # 需 restart。首次安装则正常 start。
+    if systemctl is-active --quiet meshd; then
+        echo "==> 重启 meshd（加载新版本）"
+        systemctl restart meshd
+    else
+        systemctl start meshd
+    fi
 
     echo ""
     echo "=== 服务器安装完成 ==="
@@ -267,8 +274,16 @@ EOF
     echo "  服务: $plist"
     echo "  日志: /tmp/mesh.log"
     echo ""
-    echo "注册后启动:"
-    echo "  sudo launchctl load $plist"
+    # 升级场景：服务已在运行则直接重启加载新二进制，免手动 kickstart。
+    # 首次安装时 plist 尚未 load，维持提示用户注册后手动启动。
+    if launchctl list com.mesh.vpn &>/dev/null; then
+        echo "==> 重启服务（加载新版本）"
+        launchctl kickstart -k system/com.mesh.vpn
+        echo "  已重启: launchctl kickstart -k system/com.mesh.vpn"
+    else
+        echo "注册后启动:"
+        echo "  sudo launchctl load $plist"
+    fi
 }
 
 install_client_linux() {
@@ -292,10 +307,17 @@ EOF
 
     systemctl daemon-reload
     systemctl enable mesh
-    echo "  服务: /etc/systemd/system/mesh.service"
-    echo ""
-    echo "注册后启动:"
-    echo "  sudo systemctl start mesh"
+    # 升级场景：服务已在运行则重启加载新二进制；首次安装等注册后手动启动。
+    if systemctl is-active --quiet mesh; then
+        echo "==> 重启服务（加载新版本）"
+        systemctl restart mesh
+        echo "  已重启: systemctl restart mesh"
+    else
+        echo "  服务: /etc/systemd/system/mesh.service"
+        echo ""
+        echo "注册后启动:"
+        echo "  sudo systemctl start mesh"
+    fi
 }
 
 do_uninstall() {
