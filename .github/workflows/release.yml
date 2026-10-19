@@ -44,7 +44,7 @@ jobs:
           # 自检：identity 可用且能实际签名，失败早暴露而非卡在构建中途。
           security find-identity -p codesigning "$KEYCHAIN" | grep -q mesh-dev \
             || { echo "mesh-dev identity not found in keychain"; exit 1; }
-          echo 'int' | cc -o /tmp/sigcheck -x c - && \
+          printf 'int main(){return 0;}' | cc -x c -o /tmp/sigcheck - && \
             codesign --keychain "$KEYCHAIN" -f -s mesh-dev /tmp/sigcheck \
             || { echo "test signing failed"; exit 1; }
 
