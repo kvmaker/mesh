@@ -107,6 +107,21 @@ ping 10.100.0.x     # ping 其他客户端
 mesh status         # 查看隧道与在线节点
 ```
 
+**5. 升级到新版本**
+
+重复执行安装命令即为升级：脚本自动覆盖二进制并**重启已运行的服务**（macOS `launchctl kickstart` / Linux `systemctl restart`），设备注册信息（`~/.mesh`）与服务器配置（`/etc/mesh/meshd.yaml`）均不受影响，全程约 10 秒：
+
+```bash
+# 客户端升级（macOS / Linux 通用）
+curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh | sudo bash -s -- client
+
+# 服务器升级
+curl -fsSL https://raw.githubusercontent.com/kvmaker/mesh/master/install.sh | sudo bash -s -- server --mode relay --domain your.domain.com
+```
+
+> 🐢 境内云服务器直连 GitHub 下载 meshd 较慢，服务器升级可改用本地构建：
+> `GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o meshd ./cmd/meshd`，scp 上去后 `sudo install -m 755 meshd /usr/local/bin/meshd && sudo systemctl restart meshd`。
+
 ---
 
 <p align="center">
