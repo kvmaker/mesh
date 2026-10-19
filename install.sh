@@ -241,6 +241,29 @@ install_client_macos() {
     local real_home
     real_home=$(eval echo "~$real_user")
 
+    echo "==> 信任签名证书 mesh-dev"
+    # darwin 产物带 mesh-dev 自签证书的稳定签名（ad-hoc 身份随内容变化，
+    # LaunchDaemon 的 LWCR 信任校验会拒绝升级后的二进制）。证书公钥随仓库
+    # 分发，导入系统钥匙串并信任后，后续升级无需再操作。
+    # 按 SHA-256 指纹比对而非名字，避免系统里恰好存在同名异证书时误跳过。
+    local want_fp="9CBA9671E6DC776DA932A09A3E78DB1E6C1BE46934E70DE2DBCED1368EE61E72"
+    local crt fp
+    crt=$(mktemp)
+    download "https://raw.githubusercontent.com/$REPO/master/scripts/certs/mesh-dev.crt" "$crt"
+    fp=$(openssl x509 -in "$crt" -noout -fingerprint -sha256 2>/dev/null | sed 's/.*=//;s/://g')
+    if [ "$fp" != "$want_fp" ]; then
+        echo "Error: 证书指纹不匹配（期望 $want_fp，实际 $fp）"
+        rm -f "$crt"
+        exit 1
+    fi
+    if security find-certificate -Z "$fp" /Library/Keychains/System.keychain &>/dev/null; then
+        echo "  已信任，跳过"
+    else
+        security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain "$crt"
+        echo "  已导入系统钥匙串并信任"
+    fi
+    rm -f "$crt"
+
     echo "==> 配置 launchd 服务"
     cat > "$plist" << EOF
 <?xml version="1.0" encoding="UTF-8"?>

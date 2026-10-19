@@ -26,6 +26,7 @@
 
 ## 关键约定
 
+- **macOS 产物签名（mesh-dev 自签证书）**：darwin 二进制必须在 CI（macos runner）上用 mesh-dev 证书签名——ssh 等 GUI-less 会话无法非交互使用钥匙串私钥（SecurityAgent 需要 GUI），本地构建不签名、只作调试用。证书 p12 存 GitHub Secrets（`MESH_SIGNING_P12` + `MESH_SIGNING_PASS`，legacy 算法格式），公钥在 `scripts/certs/mesh-dev.crt`（随仓库分发）。新 Mac 首次 `install.sh client` 自动信任证书；已部署机器补信任：`sudo security add-trusted-cert -d -r trustRoot -p codeSign -k /Library/Keychains/System.keychain scripts/certs/mesh-dev.crt`。证书有效期至 2036 年。
 - **install.sh 从 master 拉取**：修改 install.sh 后必须 push 到 master，线上 `curl .../master/install.sh` 才生效；老机器可加 `--version X.Y.Z` 钉住旧版
 - **境内云服务器直连 GitHub 慢**（18MB meshd 可挂数分钟）：gz-ubuntu 升级走本地构建 + scp（注入版本号便于 `meshd version` 追溯）：
   ```bash
