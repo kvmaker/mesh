@@ -308,6 +308,19 @@ EOF
         echo "  已重启: launchctl kickstart -k system/com.mesh.vpn"
     elif [ -f "$real_home/.mesh/config.json" ]; then
         echo "==> 启动服务（设备已注册）"
+        # 接管手动运行的旧进程：未走 launchd 的 mesh up 占着单实例锁，
+        # 不先终止的话服务实例起不来（会被 KeepAlive 循环重启打日志）。
+        if pgrep -f "$INSTALL_DIR/mesh up" >/dev/null 2>&1; then
+            echo "  终止手动运行的旧进程: pkill -f $INSTALL_DIR/mesh up"
+            pkill -f "$INSTALL_DIR/mesh up" || true
+            # 有界等待旧进程退出释放单实例锁：SIGTERM 下通常亚秒级，
+            # 但若正卡在重连 dial 等 path 上可能拖长，固定 sleep 不保险。
+            local waited=0
+            until ! pgrep -f "$INSTALL_DIR/mesh up" >/dev/null 2>&1; do
+                [ $waited -ge 20 ] && { echo "  警告: 旧进程 10s 未退出，服务将由 KeepAlive 自行接管"; break; }
+                sleep 0.5; waited=$((waited+1))
+            done
+        fi
         launchctl bootstrap system "$plist" 2>/dev/null || launchctl load "$plist"
         echo "  已启动: $plist"
     else
