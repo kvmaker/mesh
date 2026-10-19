@@ -24,20 +24,22 @@ jobs:
       - name: Build binaries
         run: |
           mkdir -p dist
+          # 版本号注入：GITHUB_REF_NAME 即 tag 名（vX.Y.Z），未注入时 mesh version 显示 dev。
+          LDFLAGS="-s -w -X github.com/maxyu/mesh/internal/common/version.Version=${GITHUB_REF_NAME}"
           # Server (Linux amd64)
-          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/meshd ./cmd/meshd
+          GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/meshd ./cmd/meshd
           tar -czf dist/meshd_${GITHUB_REF_NAME#v}_linux_amd64.tar.gz -C dist meshd
           rm dist/meshd
           # Client (Linux amd64)
-          GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/mesh ./cmd/mesh
+          GOOS=linux GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/mesh ./cmd/mesh
           tar -czf dist/mesh_${GITHUB_REF_NAME#v}_linux_amd64.tar.gz -C dist mesh
           rm dist/mesh
           # Client (macOS arm64)
-          GOOS=darwin GOARCH=arm64 go build -ldflags="-s -w" -o dist/mesh ./cmd/mesh
+          GOOS=darwin GOARCH=arm64 go build -ldflags="$LDFLAGS" -o dist/mesh ./cmd/mesh
           tar -czf dist/mesh_${GITHUB_REF_NAME#v}_darwin_arm64.tar.gz -C dist mesh
           rm dist/mesh
           # Client (macOS amd64)
-          GOOS=darwin GOARCH=amd64 go build -ldflags="-s -w" -o dist/mesh ./cmd/mesh
+          GOOS=darwin GOARCH=amd64 go build -ldflags="$LDFLAGS" -o dist/mesh ./cmd/mesh
           tar -czf dist/mesh_${GITHUB_REF_NAME#v}_darwin_amd64.tar.gz -C dist mesh
           rm dist/mesh
 
