@@ -297,12 +297,19 @@ EOF
     echo "  服务: $plist"
     echo "  日志: /tmp/mesh.log"
     echo ""
-    # 升级场景：服务已在运行则直接重启加载新二进制，免手动 kickstart。
-    # 首次安装时 plist 尚未 load，维持提示用户注册后手动启动。
+    # 三态：
+    #   服务已加载（升级）→ kickstart 重启加载新二进制；
+    #   已注册但服务未加载（重装/手动 unload 过）→ 自动加载启动；
+    #   未注册（全新安装）→ 提示先 mesh join 再启动，避免 mesh up 因无配置
+    #   反复退出、KeepAlive 循环重启打日志。
     if launchctl list com.mesh.vpn &>/dev/null; then
         echo "==> 重启服务（加载新版本）"
         launchctl kickstart -k system/com.mesh.vpn
         echo "  已重启: launchctl kickstart -k system/com.mesh.vpn"
+    elif [ -f "$real_home/.mesh/config.json" ]; then
+        echo "==> 启动服务（设备已注册）"
+        launchctl bootstrap system "$plist" 2>/dev/null || launchctl load "$plist"
+        echo "  已启动: $plist"
     else
         echo "注册后启动:"
         echo "  sudo launchctl load $plist"
