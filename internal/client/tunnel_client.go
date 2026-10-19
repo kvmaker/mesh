@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -90,6 +91,12 @@ func (tc *TunnelClient) dialFallback(ctx context.Context, network, addr string) 
 	}
 	host, port, perr := net.SplitHostPort(addr)
 	if perr != nil || host != tc.serverHost || net.ParseIP(host) != nil {
+		return nil, err
+	}
+	// 只对 DNS 解析失败兜底。connection refused / 拨号超时说明服务器或
+	// 链路本身不可达，重拨缓存 IP 只会让每次重连白等两轮 dialer.Timeout。
+	var dnsErr *net.DNSError
+	if !errors.As(err, &dnsErr) {
 		return nil, err
 	}
 	ip, _ := tc.hostIP.Load().(string)
