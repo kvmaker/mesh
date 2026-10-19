@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -20,11 +22,15 @@ import (
 // IP packets through a local TUN device.
 type TunnelClient struct {
 	serverURL  string
+	serverHost string // host portion of serverURL, used for DNS fallback matching
 	secret     string
 	mtu        int
 	tun        meshtun.Device
 	statusDir  string
 	httpClient *http.Client
+	dialer     *net.Dialer
+	// hostIP 缓存隧道域名最近一次成功解析的 IP，DNS 故障时兜底拨号。
+	hostIP atomic.Value // string
 
 	connected   atomic.Int32
 	connectedAt atomic.Int64 // unix nano
@@ -50,15 +56,62 @@ func NewTunnelClient(serverURL, secret, localIP, network string, mtu int, status
 		dev.Close()
 		return nil, err
 	}
-	return &TunnelClient{
-		serverURL: serverURL,
-		secret:    secret,
-		mtu:       mtu,
-		tun:       dev,
-		statusDir: statusDir,
-		// 复用单个 http.Client，避免每次重连新建 Transport 造成空闲连接/fd 泄漏。
-		httpClient: &http.Client{Transport: &http.Transport{TLSClientConfig: tlsConfig}},
-	}, nil
+	host := serverURL
+	if u, err := url.Parse(serverURL); err == nil && u.Hostname() != "" {
+		host = u.Hostname()
+	}
+	tc := &TunnelClient{
+		serverURL:  serverURL,
+		serverHost: host,
+		secret:     secret,
+		mtu:        mtu,
+		tun:        dev,
+		statusDir:  statusDir,
+		dialer:     &net.Dialer{Timeout: 15 * time.Second},
+	}
+	// 复用单个 http.Client，避免每次重连新建 Transport 造成空闲连接/fd 泄漏。
+	// DialContext 用自定义兜底：DNS 解析失败时拨最近缓存的 IP，压缩 DNS
+	// 故障期（Wi-Fi 切换、路由器 DNS 抖动）的断线窗口；TLS/SNI 仍用 URL
+	// 里的域名，证书校验不受影响。
+	tc.httpClient = &http.Client{Transport: &http.Transport{
+		TLSClientConfig: tlsConfig,
+		DialContext:     tc.dialFallback,
+	}}
+	return tc, nil
+}
+
+// dialFallback 先正常拨号；目标为隧道域名且失败（通常是 DNS 解析失败，
+// 错误形如 "no such host"）时改拨最近成功解析的 IP。证书校验走域名，
+// 不受影响。
+func (tc *TunnelClient) dialFallback(ctx context.Context, network, addr string) (net.Conn, error) {
+	conn, err := tc.dialer.DialContext(ctx, network, addr)
+	if err == nil {
+		return conn, nil
+	}
+	host, port, perr := net.SplitHostPort(addr)
+	if perr != nil || host != tc.serverHost || net.ParseIP(host) != nil {
+		return nil, err
+	}
+	ip, _ := tc.hostIP.Load().(string)
+	if ip == "" {
+		return nil, err
+	}
+	if conn, err2 := tc.dialer.DialContext(ctx, network, net.JoinHostPort(ip, port)); err2 == nil {
+		log.Printf("dns unavailable for %s, dialed cached ip %s", host, ip)
+		return conn, nil
+	}
+	return nil, err
+}
+
+// refreshHostIP 异步解析隧道域名并缓存，供 DNS 故障时兜底。
+func (tc *TunnelClient) refreshHostIP() {
+	if tc.serverHost == "" || net.ParseIP(tc.serverHost) != nil {
+		return
+	}
+	ips, err := net.LookupHost(tc.serverHost)
+	if err == nil && len(ips) > 0 {
+		tc.hostIP.Store(ips[0])
+	}
 }
 
 // Run blocks and continuously maintains a connection to the server.
@@ -152,6 +205,19 @@ func (tc *TunnelClient) connect(ctx context.Context, pktCh <-chan []byte) error 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	// failErr 携带最先失败的 goroutine（ping 超时 / WS 读错误）的真实错
+	// 误，使 connect 返回值保留真实死因。此前这些路径统一 cancel 后主循
+	// 环返回 ctx.Err()，日志里只能看到 context canceled，排障无从下手。
+	failErr := make(chan error, 1)
+	fail := func(err error) {
+		select {
+		case failErr <- err:
+		default:
+		}
+	}
+
+	go tc.refreshHostIP()
+
 	// Ping loop: measure RTT and detect dead connections.
 	go func() {
 		ticker := time.NewTicker(5 * time.Second)
@@ -169,6 +235,7 @@ func (tc *TunnelClient) connect(ctx context.Context, pktCh <-chan []byte) error 
 				err := conn.Ping(pingCtx)
 				pingCancel()
 				if err != nil {
+					fail(fmt.Errorf("ping: %w", err))
 					cancel()
 					return
 				}
@@ -183,6 +250,7 @@ func (tc *TunnelClient) connect(ctx context.Context, pktCh <-chan []byte) error 
 		for {
 			_, pkt, err := conn.Read(ctx)
 			if err != nil {
+				fail(fmt.Errorf("read WS: %w", err))
 				return
 			}
 			tc.rxPackets.Add(1)
@@ -206,6 +274,13 @@ func (tc *TunnelClient) connect(ctx context.Context, pktCh <-chan []byte) error 
 	for {
 		select {
 		case <-ctx.Done():
+			// 优先返回真实失败原因；只有根 ctx 取消（SIGTERM 进程退出）
+			// 才是真正的 context canceled。
+			select {
+			case err := <-failErr:
+				return err
+			default:
+			}
 			return ctx.Err()
 		case pkt := <-pktCh:
 			if err := conn.Write(ctx, websocket.MessageBinary, pkt); err != nil {

@@ -123,13 +123,21 @@ func (cc *ClientConn) Enqueue(pkt Packet) bool {
 	}
 }
 
-// Close stops the writeLoop and releases the send queue. Safe to call
-// multiple times.
+// Close stops the writeLoop and releases the send queue. It also closes the
+// underlying WebSocket so a blocked Conn.Read returns immediately — without
+// this, kicking a stale connection would leave its read side blocked until
+// the TCP stack times out. Safe to call multiple times.
 func (cc *ClientConn) Close() {
 	if cc.closed.Swap(true) {
 		return
 	}
-	close(cc.Done)
+	// Done 允许为 nil：测试用字面量构造的 ClientConn 没有 writeLoop。
+	if cc.Done != nil {
+		close(cc.Done)
+	}
+	if cc.Conn != nil {
+		cc.Conn.CloseNow()
+	}
 }
 
 // writeLoop is the single writer to the underlying WebSocket for this
@@ -155,17 +163,31 @@ func (cc *ClientConn) writeLoop() {
 			// them silently. Use a fresh, bounded context here: the
 			// normal ctx is already canceled at this point, which would
 			// cause every drain write to fail with context.Canceled.
+			//
+			// Close 现在会先 CloseNow 底层连接，socket 通常已断：首次
+			// 排空写失败后不再逐包重试（否则每个排队包打一条错误日
+			// 志），丢弃剩余包并计入 DropPackets。
 			drainCtx, drainCancel := context.WithTimeout(context.Background(), 2*time.Second)
+			dropped, failed := 0, false
 			for {
 				select {
 				case pkt := <-cc.SendQueue:
 					cc.QueueDepth.Add(-1)
+					if failed {
+						dropped++
+						continue
+					}
 					if err := cc.Conn.Write(drainCtx, websocket.MessageBinary, pkt.Data); err != nil {
-						log.Printf("write to client %s during shutdown: %v", cc.DeviceID, err)
+						log.Printf("write to client %s during shutdown: %v (dropping remaining queued packets)", cc.DeviceID, err)
+						failed = true
+						dropped++
 					} else {
 						cc.RecordTx(len(pkt.Data))
 					}
 				default:
+					if dropped > 0 {
+						cc.DropPackets.Add(uint64(dropped))
+					}
 					drainCancel()
 					return
 				}
@@ -211,10 +233,18 @@ func NewRouter() *Router {
 }
 
 // Register adds a route entry mapping the given IP to a ClientConn.
+//
+// 同 IP 重连：新连接覆盖路由后立即关闭旧连接。否则旧连接的 HandleWebSocket
+// 仍挂在阻塞的 Conn.Read 上成为孤儿——既占着 goroutine，又会在数小时后
+// TCP 自然死亡时打出误导性的 disconnected 日志、把 DB 在线状态标错。
 func (r *Router) Register(ip netip.Addr, cc *ClientConn) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	old := r.routes[ip]
 	r.routes[ip] = cc
+	r.mu.Unlock()
+	if old != nil && old != cc {
+		old.Close()
+	}
 }
 
 // Unregister removes a route entry for the given IP.
